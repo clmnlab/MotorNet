@@ -2,7 +2,7 @@ import torch as th
 import torch.nn as nn
 import torch.optim as optim
 from torch.distributions import Normal
-from networks import GRUPolicyNet, QNetwork
+from networks import GRUPolicy, QNetwork
 from buffer import ReplayBuffer 
 # from networks.py와 buffer.py에서 필요한 클래스를 가져옵니다.
 # 이 코드는 Soft Actor-Critic (SAC) 에이전트를 구현합니다.
@@ -23,7 +23,7 @@ from concurrent.futures import ProcessPoolExecutor, as_completed
 
 
 class SLAgent:
-    def __init__(self, obs_dim, action_dim, hidden_dims=128, device='CPU', lr=3e-4, gamma=0.99, tau=0.005, alpha=0.2,
+    def __init__(self, obs_dim, action_dim, hidden_dims=128, device='cpu', lr=3e-4, gamma=0.99, tau=0.005, alpha=0.2,
                  freeze_output_layer=False, freeze_input_layer=False, learn_h0=True):
         self.device = device
         self.obs_dim = obs_dim
@@ -31,69 +31,76 @@ class SLAgent:
         self.gamma = gamma
         self.tau = tau  # target update rate
         self.alpha = alpha  # entropy temperature
-        self.policy_net = GRUPolicyNet(obs_dim, hidden_dims, action_dim, device=device, 
+        self.policy_net = GRUPolicy(obs_dim, hidden_dims, action_dim, device=device, 
                                        freeze_output_layer=freeze_output_layer, freeze_input_layer=freeze_input_layer).to(device)
         self.policy_optimizer = optim.Adam(self.policy_net.parameters(), lr=lr)
         self.replay_buffer = ReplayBuffer(obs_dim, action_dim, capacity=1000, device=device)        
 
     def select_action(self, obs, h0=None): ## we can consider "deterministic" option
-        h = self.policy_net.init_hidden(batch_size=batch_size] if h0 is None else h0
+        h = self.policy_net.init_hidden(batch_size=self.batch_size) if h0 is None else h0
         action, h = self.policy_net(obs, h)
         return action, h
     
-    def update(self, batch_size):
-        batch = self.replay_buffer.sample_batch(batch_size)
-        obs = batch['obs']       # (B, obs_dim)
-        action = batch['action'] # (B, action_dim)
-        reward = batch['reward'] # (B,1)
-        next_obs = batch['next_obs']
-        done = batch['done']     # (B,1)
-
-        # 1) Policy 업데이트
-        action, h = self.policy_net(obs)
- 
-
-        # 2) Q-value 업데이트
-        q_value = self.q_net(obs, new_action)
-        q_loss = nn.MSELoss()(q_value, reward + self.gamma * (1 - done) * q_value)
-
-        # 최적화
+    def update(self, data):
+        loss, _ = self.calc_loss(data)
         self.policy_optimizer.zero_grad()
-        q_loss.backward()
+        loss.backward()
         self.policy_optimizer.step()
+        return loss
+    
 
-        return {
-            'q_loss': q_loss.item(),
-            'policy_loss': policy_loss.item()
+
+    def save(self, save_dir):
+        th.save(self.policy_net.state_dict(), f"{save_dir}/policy.pth")
+        print("done.")
+
+    def load(self, load_dir):
+        self.policy_net.load_state_dict(th.load(f"{load_dir}/policy.pth"))
+    
+    def calc_loss(self, data, loss_weight=None):
+        loss = {
+            'position': None,
+            'jerk': None,
+            'muscle': None,
+            'muscle_derivative': None,
+            'hidden': None,
+            'hidden_derivative': None,
+            'hidden_jerk': None,}
+
+        loss['position'] = th.mean(th.sum(th.abs(data['xy']-data['tg']), dim=-1),axis=1) # average over time not targets
+        loss['jerk'] = th.mean(th.sum(th.square(th.diff(data['vel'], n=2, dim=1)), dim=-1))
+        loss['muscle'] = th.mean(th.sum(data['all_force'], dim=-1))
+        loss['muscle_derivative'] = th.mean(th.sum(th.square(th.diff(data['all_force'], n=1, dim=1)), dim=-1))
+        loss['hidden'] = th.mean(th.square(data['all_hidden']))
+        loss['hidden_derivative'] = th.mean(th.square(th.diff(data['all_hidden'], n=1, dim=1)))
+        loss['hidden_jerk'] = th.mean(th.square(th.diff(data['all_hidden'], n=3, dim=1)))
+        
+        if loss_weight is None:
+            # currently in use
+            loss_weight = np.array([1e+3,1e+5,1e-1,3e-4,1e-5,1e-3,0]) # 3.16227766e-04
+            
+        loss_weighted = {
+            'position': loss_weight[0]*loss['position'],
+            'jerk': loss_weight[1]*loss['jerk'],
+            'muscle': loss_weight[2]*loss['muscle'],
+            'muscle_derivative': loss_weight[3]*loss['muscle_derivative'],
+            'hidden': loss_weight[4]*loss['hidden'],
+            'hidden_derivative': loss_weight[5]*loss['hidden_derivative'],
+            'hidden_jerk': loss_weight[6]*loss['hidden_jerk']
         }
 
+        overall_loss = 0
+        for key in loss_weighted:
+            if key=='position':
+                overall_loss += th.mean(loss_weighted[key])
+            else:
+                overall_loss += loss_weighted[key]
 
+        return overall_loss, loss_weighted
 
  
 
 
-# Define file paths
-save_dir = "save"
-weight_file = os.path.join(save_dir, "weights")
-log_file = os.path.join(save_dir, "log.json")
-cfg_file = os.path.join(save_dir, "cfg.json")
-
-# Create the 'save' directory if it doesn't exist
-os.makedirs(save_dir, exist_ok=True)
-
-# Save model weights
-th.save(policy.state_dict(), weight_file)
-
-# Save training history (log)
-with open(log_file, 'w') as file:
-    json.dump(losses, file)
-
-# Save environment configuration dictionary
-cfg = env.get_save_config()
-with open(cfg_file, 'w') as file:
-    json.dump(cfg, file)
-
-print("done.")
 
 
 class SACAgent:
