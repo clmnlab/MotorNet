@@ -461,3 +461,128 @@ def create_dataframe(idx):
             for i, v in enumerate(val)
         ])
     return pd.DataFrame(data)
+
+
+
+def calc_loss_batch(data, loss_weight=None):   # ChatGPT created this function
+    """
+    data: dict of tensors, each tensor shape (batch, T, feature_dim?) 또는 (batch, T) 등.
+      예: data['xy'] shape (batch, T, xy_dim), data['tg'] same shape.
+    loss_weight: None 또는 array-like of length 7, 순서:
+      ['position', 'jerk', 'muscle', 'muscle_derivative', 'hidden', 'hidden_derivative', 'hidden_jerk']
+      각 항의 배치별 스칼라 손실에 곱할 가중치.
+    Returns:
+      overall_loss: 스칼라 텐서 (batch-wise weighted sum을 batch 평균)
+      loss_terms: dict of per-term weighted 손실 텐서, shape (batch,)
+    """
+
+    # 1) 우선 각 항의 "비가중치" 손실을 batch-wise로 계산: shape (batch,)
+    loss = {}
+
+    # position: 시간축에 대해 |xy - tg| 의 L1 혹은 L2 등을 쓸 수 있는데, 여기선 L1:
+    # data['xy'], data['tg'] shape (batch, T, dim)
+    # abs difference: (batch, T, dim) -> sum over dim -> (batch, T) -> mean over time dim=1 -> (batch,)
+    loss['position'] = th.mean(
+        th.sum(th.abs(data['xy'] - data['tg']), dim=-1),
+        dim=1
+    )  # shape (batch,)
+
+    # jerk: 속도의 2차 차분 제곱합
+    # data['vel'] shape (batch, T, vel_dim)
+    # th.diff(..., n=2, dim=1) -> shape (batch, T-2, vel_dim)
+    # square, sum over feature dim -> (batch, T-2), then mean over time dim=1 -> (batch,)
+    vel = data['vel']
+    # 주의: T 길이가 2보다 커야 함
+    if vel.size(1) >= 3:
+        jerk_tensor = th.diff(vel, n=2, dim=1)  # (batch, T-2, vel_dim)
+        loss['jerk'] = th.mean(
+            th.sum(jerk_tensor.square(), dim=-1),
+            dim=1
+        )  # (batch,)
+    else:
+        # 너무 짧으면 0으로 처리
+        loss['jerk'] = th.zeros(data['vel'].shape[0], device=data['vel'].device)
+
+    # muscle: all_force shape (batch, T, force_dim). 예: sum over feature, mean over time:
+    loss['muscle'] = th.mean(
+        th.sum(data['all_force'], dim=-1),
+        dim=1
+    )  # (batch,)
+
+    # muscle_derivative: 1차 차분 제곱합
+    force = data['all_force']
+    if force.size(1) >= 2:
+        d_force = th.diff(force, n=1, dim=1)  # (batch, T-1, force_dim)
+        loss['muscle_derivative'] = th.mean(
+            th.sum(d_force.square(), dim=-1),
+            dim=1
+        )  # (batch,)
+    else:
+        loss['muscle_derivative'] = th.zeros(data['all_force'].shape[0], device=data['all_force'].device)
+
+    # hidden: all_hidden shape (batch, T, hidden_dim)
+    # 예: 제곱합 후 시간 평균
+    loss['hidden'] = th.mean(
+        th.sum(data['all_hidden'].square(), dim=-1),
+        dim=1
+    )  # (batch,)
+
+    # hidden_derivative: 1차 차분
+    h = data['all_hidden']
+    if h.size(1) >= 2:
+        dh = th.diff(h, n=1, dim=1)  # (batch, T-1, hidden_dim)
+        loss['hidden_derivative'] = th.mean(
+            th.sum(dh.square(), dim=-1),
+            dim=1
+        )  # (batch,)
+    else:
+        loss['hidden_derivative'] = th.zeros(data['all_hidden'].shape[0], device=data['all_hidden'].device)
+
+    # hidden_jerk: 3차 차분
+    if h.size(1) >= 4:
+        dh3 = th.diff(h, n=3, dim=1)  # (batch, T-3, hidden_dim)
+        loss['hidden_jerk'] = th.mean(
+            th.sum(dh3.square(), dim=-1),
+            dim=1
+        )  # (batch,)
+    else:
+        loss['hidden_jerk'] = th.zeros(data['all_hidden'].shape[0], device=data['all_hidden'].device)
+
+    # 2) 가중치 준비: numpy array나 list 형태로 들어오면 tensor로 변환
+    if loss_weight is None:
+        # 기본 weight: position, jerk, muscle, muscle_derivative, hidden, hidden_derivative, hidden_jerk
+        # 예시 값: np.array([1e+3,1e+5,1e-1,3e-4,1e-5,1e-3,0])
+        w = th.tensor([1e+3, 1e+5, 1e-1, 3e-4, 1e-5, 1e-3, 0.0],
+                      device=next(iter(loss.values())).device, dtype=next(iter(loss.values())).dtype)
+    else:
+        # loss_weight이 list/np.array 등일 때
+        w = th.tensor(loss_weight, device=next(iter(loss.values())).device,
+                      dtype=next(iter(loss.values())).dtype)
+        if w.numel() != 7:
+            raise ValueError(f"loss_weight must have length 7, got {w.numel()}")
+
+    # 3) 항목별 weighted loss: shape (batch,)
+    loss_weighted = {
+        'position': w[0] * loss['position'],
+        'jerk': w[1] * loss['jerk'],
+        'muscle': w[2] * loss['muscle'],
+        'muscle_derivative': w[3] * loss['muscle_derivative'],
+        'hidden': w[4] * loss['hidden'],
+        'hidden_derivative': w[5] * loss['hidden_derivative'],
+        'hidden_jerk': w[6] * loss['hidden_jerk'],
+    }
+
+    # 4) overall loss: 배치별 합산 후 평균
+    # position 항은 원래 코드에서 th.mean(loss_weighted['position'])을 했는데,
+    # 이미 loss_weighted['position']은 shape (batch,), 따라서
+    # overall_loss = torch.mean(sum over keys of loss_weighted[key]) 형태로 계산.
+    total_per_sample = None
+    for key, lw in loss_weighted.items():
+        if total_per_sample is None:
+            total_per_sample = lw
+        else:
+            total_per_sample = total_per_sample + lw
+    # total_per_sample: shape (batch,)
+    overall_loss = th.mean(total_per_sample)  # scalar
+
+    return overall_loss, loss_weighted  # loss_weighted 값은 (batch,) 텐서들
