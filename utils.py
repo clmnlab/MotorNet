@@ -591,12 +591,13 @@ def calc_loss_batch(data, loss_weight=None):   # ChatGPT created this function
 
 def run_rollout(env,agent,batch_size=1, catch_trial_perc=50,condition='train',
                 ff_coefficient=0., is_channel=False,detach=False,calc_endpoint_force=False, go_cue_random=None,
-                disturb_hidden=False, t_disturb_hidden=0.15, d_hidden=None, seed=None):  # ff_coefficient = 0.
+                disturb_hidden=False, t_disturb_hidden=0.15, d_hidden=None, seed=None, device='cpu'):  # ff_coefficient = 0.
   
-    h = agent.policy_net.init_hidden(batch_size = batch_size)
+    h = agent.policy_net.init_hidden(batch_size = batch_size).to(device)
     obs, info = env.reset(condition=condition, catch_trial_perc=catch_trial_perc, ff_coefficient=ff_coefficient, options={'batch_size': batch_size}, 
                           is_channel=is_channel,calc_endpoint_force=calc_endpoint_force, go_cue_random=go_cue_random, seed = seed)
 
+    obs = obs.to(device)
     terminated = False
 
     # Initialize a dictionary to store lists
@@ -621,7 +622,9 @@ def run_rollout(env,agent,batch_size=1, catch_trial_perc=50,condition='train',
                 h += dh
 
         action, h = agent.policy_net(obs,h)
-        obs, terminated, info = env.step(action=action)
+
+        obs, terminated, info = env.step(action=action.to('cpu'))
+        obs = obs.to(device)
         data['all_hidden'].append(h[0, :, None, :])
         data['all_muscle'].append(info['states']['muscle'][:, 0, None, :])
         data['all_force'].append(info['states']['muscle'][:, -1, None, :])

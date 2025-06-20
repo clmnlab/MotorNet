@@ -19,7 +19,7 @@ class CentreOutFF(mn.environment.Environment):
     # check if we have K and B in kwargs
     self.K = kwargs.get('K', 150)
     self.B = kwargs.get('B', 0.5)
-
+    
 
   def reset(self, *,
             seed: int | None = None,
@@ -123,7 +123,7 @@ class CentreOutFF(mn.environment.Environment):
     self.go_cue = th.zeros((batch_size,1)).to(self.device)
     self.init = self.states['fingertip']
 
-    obs = self.get_obs(deterministic=deterministic)
+    obs = self.get_obs(deterministic=deterministic).to(self.device)
 
     
     

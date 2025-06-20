@@ -23,11 +23,12 @@ from concurrent.futures import ProcessPoolExecutor, as_completed
 
 
 class SLAgent:
-    def __init__(self, obs_dim, action_dim, hidden_dims=128, device='cpu', lr=3e-4, gamma=0.99, tau=0.005, alpha=0.2,
+    def __init__(self, obs_dim, action_dim, batch_size = 32, hidden_dims=128, device='cpu', lr=3e-4, gamma=0.99, tau=0.005, alpha=0.2,
                  freeze_output_layer=False, freeze_input_layer=False, learn_h0=True):
         self.device = device
         self.obs_dim = obs_dim
         self.action_dim = action_dim
+        self.batch_size = batch_size
         self.gamma = gamma
         self.tau = tau  # target update rate
         self.alpha = alpha  # entropy temperature
@@ -43,6 +44,7 @@ class SLAgent:
     
     def update(self, data):
         loss, _ = self.calc_loss(data)
+        loss.to(self.device)
         self.policy_optimizer.zero_grad()
         loss.backward()
         self.policy_optimizer.step()
@@ -92,7 +94,7 @@ class SLAgent:
         overall_loss = 0
         for key in loss_weighted:
             if key=='position':
-                overall_loss += th.mean(loss_weighted[key])
+                overall_loss += th.mean(loss_weighted[key].to(self.device))
             else:
                 overall_loss += loss_weighted[key]
 
