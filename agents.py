@@ -48,7 +48,7 @@ class SLAgent:
         self.policy_optimizer.zero_grad()
         loss.backward()
         self.policy_optimizer.step()
-        return loss
+        return loss.item()
     
 
 
