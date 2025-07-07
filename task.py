@@ -283,7 +283,6 @@ def get_endpoint_load(self):
   return endpoint_load
 
 
-
 class CentreOutFFGym(CentreOutFF):
     """
     사용자 정의 CentreOutFF 환경을 Stable Baselines3(SB3)와 완벽하게 호환되도록 만든
@@ -293,6 +292,7 @@ class CentreOutFFGym(CentreOutFF):
       정확하게 변환하여 SB3와의 호환성을 보장합니다.
     - TypeError 해결: `get_obs`를 오버라이드하여 `differentiable=False` 모드에서
       `self.goal`이 Numpy 배열로 변환되어 발생하는 문제를 해결합니다.
+
     - DRL 최적화: `differentiable=False` 모드 강제 및 상세 보상 함수를 내장합니다.
     """
     def __init__(self, loss_weights: dict = None, **kwargs):
@@ -303,6 +303,7 @@ class CentreOutFFGym(CentreOutFF):
             loss_weights (dict, optional): 보상 함수 각 요소의 가중치.
             **kwargs: 부모 클래스인 CentreOutFF의 __init__에 전달될 모든 인자들.
         """
+
         kwargs['differentiable'] = False
         super().__init__(**kwargs)
 
@@ -382,5 +383,6 @@ class CentreOutFFGym(CentreOutFF):
 
     # def render(self, mode='human'):
     #     if mode == 'human': self.plot()
+
 
     def close(self): pass
