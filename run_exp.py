@@ -86,7 +86,7 @@ def run_experiment(name='exp_train', device='cpu', load_path=None):
     with open(save_dir / 'losses.json', 'w') as f:
         json.dump({'losses': losses}, f, indent=4)
 # ========================================================================================
-# 4. 스크립트 실행, plot losses 도 하고 싶어
+# 4. 스크립트 실행
 # ========================================================================================
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
