@@ -53,11 +53,11 @@ class SLAgent:
 
 
     def save(self, save_dir):
-        th.save(self.policy_net.state_dict(), f"{save_dir}/policy.pth")
+        th.save(self.policy_net.state_dict(), f"{save_dir}")
         print("done.")
 
     def load(self, load_dir):
-        self.policy_net.load_state_dict(th.load(f"{load_dir}/policy.pth"))
+        self.policy_net.load_state_dict(th.load(f"{load_dir}"))
     
     def calc_loss(self, data, loss_weight=None):
         loss = {

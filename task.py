@@ -281,3 +281,106 @@ def get_endpoint_load(self):
     FF_matvel = th.tensor([[0, 1], [-1, 0]], dtype=th.float32)
     endpoint_load = self.ff_coefficient * (vel@FF_matvel.T)
   return endpoint_load
+
+
+
+class CentreOutFFGym(CentreOutFF):
+    """
+    사용자 정의 CentreOutFF 환경을 Stable Baselines3(SB3)와 완벽하게 호환되도록 만든
+    최종 Gymnasium 환경 클래스입니다.
+
+    - AttributeError 해결: 부모 클래스에서 반환된 torch.Tensor를 numpy.ndarray로
+      정확하게 변환하여 SB3와의 호환성을 보장합니다.
+    - TypeError 해결: `get_obs`를 오버라이드하여 `differentiable=False` 모드에서
+      `self.goal`이 Numpy 배열로 변환되어 발생하는 문제를 해결합니다.
+    - DRL 최적화: `differentiable=False` 모드 강제 및 상세 보상 함수를 내장합니다.
+    """
+    def __init__(self, loss_weights: dict = None, **kwargs):
+        """
+        CentreOutFFGym 환경을 초기화합니다.
+
+        Args:
+            loss_weights (dict, optional): 보상 함수 각 요소의 가중치.
+            **kwargs: 부모 클래스인 CentreOutFF의 __init__에 전달될 모든 인자들.
+        """
+        kwargs['differentiable'] = False
+        super().__init__(**kwargs)
+
+        if loss_weights is None:
+            self.loss_weights = {
+                'position': 1e+3, 'jerk': 1e+4,
+                'muscle': 1e-1, 'muscle_derivative': 3e-4
+            }
+        else:
+            self.loss_weights = loss_weights
+            
+        self._reset_history()
+
+    def _reset_history(self):
+        """보상 계산에 필요한 history 변수들을 초기화하는 헬퍼 함수입니다."""
+        batch_size = self.batch_size if hasattr(self, 'batch_size') else 1
+        zeros_vel = th.zeros((batch_size, self.skeleton.space_dim), device=self.device)
+        self.last_vel, self.prev_last_vel = zeros_vel, zeros_vel
+        self.last_force = th.zeros((batch_size, 1, self.muscle.n_muscles), device=self.device)
+
+    def get_obs(self, action=None, deterministic: bool = False) -> th.Tensor:
+        """
+        [TypeError 해결을 위한 오버라이드]
+        부모 클래스의 get_obs를 호출하기 전, `self.goal`이 Numpy 배열이면
+        다시 PyTorch 텐서로 변환하여 `th.cat` 오류를 방지합니다.
+        
+        [AttributeError 해결을 위한 수정]
+        이 메소드는 이제 항상 torch.Tensor를 반환합니다. Numpy 변환은 reset/step에서 처리합니다.
+        """
+        if hasattr(self, 'goal') and self.goal is not None and isinstance(self.goal, np.ndarray):
+            self.goal = th.from_numpy(self.goal).to(self.device).float()
+        
+        # 부모의 get_obs는 torch.Tensor를 반환
+        return super().get_obs(action=action, deterministic=deterministic)
+
+    def reset(self, *, seed: int | None = None, options: dict | None = None) -> tuple[np.ndarray, dict]:
+        """ Gymnasium API 표준에 맞는 reset 메소드입니다. """
+        # 부모 클래스의 reset은 obs를 torch.Tensor로 반환
+        obs, info = super().reset(seed=seed, options=options)
+        self._reset_history()
+        
+        # [AttributeError 수정] torch.Tensor를 numpy.ndarray로 변환
+        obs_np = obs.cpu().numpy()
+        return obs_np.astype(np.float32), info
+
+    def step(self, action: np.ndarray) -> tuple[np.ndarray, float, bool, bool, dict]:
+        """ Gymnasium API 표준에 맞는 step 메소드입니다. """
+        # 부모 클래스(CentreOutFF)는 (obs, terminated, info) 3-튜플을 반환. obs는 Tensor.
+        obs, terminated, info = super().step(action)
+
+        # 상세 보상(Reward) 계산
+        states = self.states
+        goal_th = self.goal
+
+        cost_pos = th.sum(th.square(states['fingertip'][:, :2] - goal_th))
+        current_vel = states['cartesian'][:, 2:]
+        jerk = current_vel - 2 * self.last_vel + self.prev_last_vel
+        cost_jerk = th.sum(th.square(jerk))
+        muscle_force = states['muscle'][:, 4:5, :]
+        cost_muscle = th.sum(th.square(muscle_force))
+        muscle_force_derivative = muscle_force - self.last_force
+        cost_muscle_derivative = th.sum(th.square(muscle_force_derivative))
+        total_cost = (self.loss_weights['position'] * cost_pos +
+                      self.loss_weights['jerk'] * cost_jerk +
+                      self.loss_weights['muscle'] * cost_muscle +
+                      self.loss_weights['muscle_derivative'] * cost_muscle_derivative)
+        reward = -total_cost.item()
+
+        # 다음 스텝을 위해 History 변수 업데이트
+        self.prev_last_vel = self.last_vel.clone()
+        self.last_vel = current_vel.clone()
+        self.last_force = muscle_force.clone()
+        
+        # [AttributeError 수정] torch.Tensor를 numpy.ndarray로 변환하여 반환
+        obs_np = obs.cpu().numpy()
+        return obs_np.astype(np.float32), float(reward), bool(terminated), False, info
+
+    # def render(self, mode='human'):
+    #     if mode == 'human': self.plot()
+
+    def close(self): pass
