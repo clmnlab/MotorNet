@@ -12,6 +12,7 @@ import task
 from pathlib import Path
 from tqdm import tqdm
 import argparse
+import json    
 
 from importlib import reload
 reload(agents)
@@ -25,7 +26,7 @@ from agents import SLAgent
 # ========================================================================================
 # 2. 메인 훈련 및 적응 함수
 # ========================================================================================
-def run_experiment(name='exp_train', device='cpu'):
+def run_experiment(name='exp_train', device='cpu', load_path=None):
     """
     초기 훈련과 적응 학습을 순차적으로 진행하는 메인 함수.
     """
@@ -63,6 +64,16 @@ def run_experiment(name='exp_train', device='cpu'):
 
 
     agent = SLAgent(obs_dim=n_input, action_dim=n_output, batch_size = batch_size, device=device)
+
+    # --- 저장된 모델이 있으면 로드 ---
+    if load_path is not None:
+        load_path = Path(load_path)
+        if load_path.exists():
+            print(f"모델을 불러옵니다: {load_path}")
+            agent.load(load_path)
+        else:
+            print(f"지정한 모델 경로가 존재하지 않습니다: {load_path}")
+
     for batch in range(n_batch):
         data = run_rollout(env, agent, batch_size=batch_size, device=device)
         loss = agent.update(data)
@@ -72,16 +83,22 @@ def run_experiment(name='exp_train', device='cpu'):
             avg = sum(losses[-interval:]) / len(losses[-interval:])  # Python float 평균
             print(f"Batch {batch}, Loss: {avg:.6f}")
             agent.save(save_dir / f'agent_{batch}.pth')
-
-
+    with open(save_dir / 'losses.json', 'w') as f:
+        json.dump({'losses': losses}, f, indent=4)
 # ========================================================================================
-# 4. 스크립트 실행
+# 4. 스크립트 실행, plot losses 도 하고 싶어
 # ========================================================================================
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--name', type=str, default='exp_train', help='실험 이름')
     parser.add_argument('--device', type=str, default='cpu', help='사용할 디바이스: cpu 또는 cuda')
+    parser.add_argument('--load', type=str, default=None, help='불러올 모델의 경로 (예: results/exp_train/agent_1000.pth)')
     args = parser.parse_args()
+    run_experiment(name=args.name, device=args.device, load_path=args.load)
+    print("실험이 완료되었습니다.")
+    # --- 결과 저장 --- 
 
-    run_experiment(name=args.name, device=args.device)
+    
+    
+    
 
