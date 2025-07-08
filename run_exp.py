@@ -19,14 +19,13 @@ reload(agents)
 reload(utils)
 reload(task)
 from utils import load_env, load_policy, calc_loss, run_rollout
-from model import run_episode
 from task import CentreOutFF
 from agents import SLAgent
 # from sb3_contrib import RecurrentPPO
 # ========================================================================================
 # 2. 메인 훈련 및 적응 함수
 # ========================================================================================
-def run_experiment(name='exp_train', device='cpu', load_path=None, config = 'parameters.json'):
+def run_experiment(name='exp_train', device='cpu', load_path=None, config = 'parameters.json', ff_coeff = 0):
     """
     초기 훈련과 적응 학습을 순차적으로 진행하는 메인 함수.
     """
@@ -61,16 +60,16 @@ def run_experiment(name='exp_train', device='cpu', load_path=None, config = 'par
     if load_path is not None:
         load_path = Path(load_path)
         if load_path.exists():
-            print(f"loading a saved model": {load_path}")
+            print(f"loading a saved model: {load_path}")
             agent.load(load_path)
         else:
             print(f"Model does not exist: {load_path}")
     
     losses = []
     for batch in tqdm(range(train_params['n_batch']), desc="progress of training"):
-        data = run_rollout(env, agent, batch_size=train_params['batch_size'], device=device)
+        data = run_rollout(env, agent, batch_size=train_params['batch_size'], ff_coefficient=ff_coeff, condition='test')
         loss = agent.update(data)
-        losses.append(loss.item())
+        losses.append(loss)
 
         if (batch + 1) % train_params['log_interval'] == 0:
             avg_loss = np.mean(losses[-train_params['log_interval']:])
@@ -86,6 +85,7 @@ if __name__ == '__main__':
     parser.add_argument('--name', type=str, default='exp_train', help='실험 이름')
     parser.add_argument('--config', type=str, default='parameters.json', help='실험 이름')
     parser.add_argument('--device', type=str, default='cuda', help='사용할 디바이스: cpu 또는 cuda')
+    parser.add_argument('--ff_coeff', type=float, default=0., help='force field, 0 or 8')
     parser.add_argument('--load', type=str, default=None, help='불러올 모델의 경로 (예: results/exp_train/agent_1000.pth)')
     args = parser.parse_args()
     run_experiment(name=args.name, device=args.device, load_path=args.load)
@@ -95,4 +95,3 @@ if __name__ == '__main__':
     
     
     
-
