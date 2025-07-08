@@ -347,13 +347,19 @@ class CentreOutFFGym(CentreOutFF):
         
         # [AttributeError 수정] torch.Tensor를 numpy.ndarray로 변환
         obs_np = obs.cpu().numpy()
-        return obs_np.astype(np.float32), info
+        obs_squeezed = np.squeeze(obs_np)
+
+        return obs_squeezed.astype(np.float32), info
 
     def step(self, action: np.ndarray) -> tuple[np.ndarray, float, bool, bool, dict]:
         """ Gymnasium API 표준에 맞는 step 메소드입니다. """
         # 부모 클래스(CentreOutFF)는 (obs, terminated, info) 3-튜플을 반환. obs는 Tensor.
-        obs, terminated, info = super().step(action)
-
+        # SB3의 1D numpy action을 부모 클래스가 기대하는 2D torch.Tensor로 변환합니다.
+        action_batch = np.expand_dims(action, axis=0)
+        action_tensor = th.from_numpy(action_batch).float().to(self.device)
+        
+        # 부모 클래스의 step은 (obs_batch, terminated, info)를 반환. obs_batch는 Tensor.
+        obs_batch, terminated, info = super().step(action_tensor)
         # 상세 보상(Reward) 계산
         states = self.states
         goal_th = self.goal
@@ -378,8 +384,11 @@ class CentreOutFFGym(CentreOutFF):
         self.last_force = muscle_force.clone()
         
         # [AttributeError 수정] torch.Tensor를 numpy.ndarray로 변환하여 반환
-        obs_np = obs.cpu().numpy()
-        return obs_np.astype(np.float32), float(reward), bool(terminated), False, info
+        # obs_np = np.squeeze(obs.cpu().numpy())
+        obs_np = obs_batch.cpu().numpy()
+        obs_squeezed = np.squeeze(obs_np)
+        
+        return obs_squeezed.astype(np.float32), float(reward), bool(terminated), False, info
 
     # def render(self, mode='human'):
     #     if mode == 'human': self.plot()

@@ -25,7 +25,7 @@ from agents import SLAgent
 # ========================================================================================
 # 2. 메인 훈련 및 적응 함수
 # ========================================================================================
-def run_experiment(name='exp_train', device='cpu', load_path=None, config = 'parameters.json', ff_coeff = 0):
+def run_experiment(name='exp_train', device='cpu', load_path=None, config = 'params.json', condition = 'train', ff_coeff = 0):
     """
     초기 훈련과 적응 학습을 순차적으로 진행하는 메인 함수.
     """
@@ -67,7 +67,7 @@ def run_experiment(name='exp_train', device='cpu', load_path=None, config = 'par
     
     losses = []
     for batch in tqdm(range(train_params['n_batch']), desc="progress of training"):
-        data = run_rollout(env, agent, batch_size=train_params['batch_size'], ff_coefficient=ff_coeff, condition='test')
+        data = run_rollout(env, agent, batch_size=train_params['batch_size'], ff_coefficient=ff_coeff, condition=condition)
         loss = agent.update(data)
         losses.append(loss)
 
@@ -81,16 +81,23 @@ def run_experiment(name='exp_train', device='cpu', load_path=None, config = 'par
 # 4. 스크립트 실행
 # ========================================================================================
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--name', type=str, default='exp_train', help='실험 이름')
-    parser.add_argument('--config', type=str, default='parameters.json', help='실험 이름')
-    parser.add_argument('--device', type=str, default='cuda', help='사용할 디바이스: cpu 또는 cuda')
-    parser.add_argument('--ff_coeff', type=float, default=0., help='force field, 0 or 8')
-    parser.add_argument('--load', type=str, default=None, help='불러올 모델의 경로 (예: results/exp_train/agent_1000.pth)')
-    args = parser.parse_args()
-    run_experiment(name=args.name, device=args.device, load_path=args.load)
-    print("실험이 완료되었습니다.")
-    # --- 결과 저장 --- 
+    # parser = argparse.ArgumentParser()
+    # parser.add_argument('--name', type=str, default='exp_train', help='실험 이름')
+    # parser.add_argument('--config', type=str, default='parameters.json', help='실험 이름')
+    # parser.add_argument('--device', type=str, default='cuda', help='사용할 디바이스: cpu 또는 cuda')
+    # parser.add_argument('--ff_coeff', type=float, default=0., help='force field, 0 or 8')
+    # parser.add_argument('--load', type=str, default=None, help='불러올 모델의 경로 (예: results/exp_train/agent_1000.pth)')
+    # args = parser.parse_args()
+    # run_experiment(name=args.name, device=args.device, load_path=args.load)
+    run_experiment(name='baseline', device='cuda',load_path=None, config='params.json', condition='train',ff_coeff=0.0)
+    print("baseline training done")
+    run_experiment(name='adapt1', device='cuda', load_path='results/baseline/agent_30000.pth', config='params.json', condition='test',ff_coeff=8.0)
+    print("adapt1 training done")
+    run_experiment(name='washout', device='cuda', load_path='results/adapt1/agent_30000.pth', config='params.json', condition='test',ff_coeff=0.0)
+    print("washout  done")
+    run_experiment(name='adapt2', device='cuda', load_path='results/washout/agent_30000.pth', config='params.json', condition='test',ff_coeff=8.0)
+    print("relearning done")
+
 
     
     
