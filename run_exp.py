@@ -55,7 +55,7 @@ def run_experiment(name='exp_train', device='cpu', load_path=None, config = 'par
     n_output = env.n_muscles
 
 
-    agent = SLAgent(obs_dim=n_input, action_dim=n_output, batch_size = batch_size, device=device)
+    agent = SLAgent(obs_dim=n_input, action_dim=n_output, batch_size = train_params['batch_size'], device=device)
 
     # --- 저장된 모델이 있으면 로드 ---
     if load_path is not None:
