@@ -26,28 +26,23 @@ from agents import SLAgent
 # ========================================================================================
 # 2. 메인 훈련 및 적응 함수
 # ========================================================================================
-def run_experiment(name='exp_train', device='cpu', load_path=None):
+def run_experiment(name='exp_train', device='cpu', load_path=None, config = 'parameters.json'):
     """
     초기 훈련과 적응 학습을 순차적으로 진행하는 메인 함수.
     """
-
-    action_noise         = 1e-4
-    proprioception_noise = 1e-3
-    vision_noise         = 1e-4
-    vision_delay         = 0.07
-    proprioception_delay = 0.02
-    max_ep_duration = 1.0
-    batch_size = 128
-    n_batch = 20000
-    losses = []
-    interval = 100
+    with open(config, 'r') as f:
+        config = json.load(f)
+    
+    # --- parameters setting ---
+    env_params = config['env_params']
+    train_params = config['training_params']
 
     # --- 디렉토리 설정 ---
     save_dir = Path.cwd() / 'results' / name
     os.makedirs(save_dir, exist_ok=True)
-    print(f"결과는 다음 디렉토리에 저장됩니다: {save_dir}")
+    print(f"Saving in the following directory: {save_dir}")
     device = th.device("cuda" if th.cuda.is_available() else "cpu")
-    print(f"사용 장치: {device}")
+    print(f"Device: {device}")
 
 
 
@@ -55,10 +50,7 @@ def run_experiment(name='exp_train', device='cpu', load_path=None):
     # Define task and the effector
     effector = mn.effector.RigidTendonArm26(muscle=mn.muscle.RigidTendonHillMuscle())
 
-    env = CentreOutFF(effector=effector,max_ep_duration=max_ep_duration,name=name,
-        action_noise=action_noise,proprioception_noise=proprioception_noise,
-        vision_noise=vision_noise,proprioception_delay=proprioception_delay,
-        vision_delay=vision_delay)
+    env = CentreOutFF(effector=effector, **env_params)
     n_input = env.observation_space.shape[0]
     n_output = env.n_muscles
 
@@ -69,20 +61,21 @@ def run_experiment(name='exp_train', device='cpu', load_path=None):
     if load_path is not None:
         load_path = Path(load_path)
         if load_path.exists():
-            print(f"모델을 불러옵니다: {load_path}")
+            print(f"loading a saved model": {load_path}")
             agent.load(load_path)
         else:
-            print(f"지정한 모델 경로가 존재하지 않습니다: {load_path}")
-
-    for batch in range(n_batch):
-        data = run_rollout(env, agent, batch_size=batch_size, device=device)
+            print(f"Model does not exist: {load_path}")
+    
+    losses = []
+    for batch in tqdm(range(train_params['n_batch']), desc="progress of training"):
+        data = run_rollout(env, agent, batch_size=train_params['batch_size'], device=device)
         loss = agent.update(data)
         losses.append(loss.item())
 
-        if batch % interval == 0:
-            avg = sum(losses[-interval:]) / len(losses[-interval:])  # Python float 평균
-            print(f"Batch {batch}, Loss: {avg:.6f}")
-            agent.save(save_dir / f'agent_{batch}.pth')
+        if (batch + 1) % train_params['log_interval'] == 0:
+            avg_loss = np.mean(losses[-train_params['log_interval']:])
+            tqdm.write(f"Batch {batch+1}/{train_params['n_batch']}, recent {train_params['log_interval']} batch averaged Loss: {avg_loss:.6f}")
+            agent.save(save_dir / f'agent_{batch+1}.pth')
     with open(save_dir / 'losses.json', 'w') as f:
         json.dump({'losses': losses}, f, indent=4)
 # ========================================================================================
@@ -91,7 +84,8 @@ def run_experiment(name='exp_train', device='cpu', load_path=None):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--name', type=str, default='exp_train', help='실험 이름')
-    parser.add_argument('--device', type=str, default='cpu', help='사용할 디바이스: cpu 또는 cuda')
+    parser.add_argument('--config', type=str, default='parameters.json', help='실험 이름')
+    parser.add_argument('--device', type=str, default='cuda', help='사용할 디바이스: cpu 또는 cuda')
     parser.add_argument('--load', type=str, default=None, help='불러올 모델의 경로 (예: results/exp_train/agent_1000.pth)')
     args = parser.parse_args()
     run_experiment(name=args.name, device=args.device, load_path=args.load)
