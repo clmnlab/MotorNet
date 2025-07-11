@@ -77,6 +77,7 @@ def run_experiment(name='exp_train', device='cpu', load_path=None, config = 'par
             agent.save(save_dir / f'agent_{batch+1}.pth')
     with open(save_dir / 'losses.json', 'w') as f:
         json.dump({'losses': losses}, f, indent=4)
+    
 # ========================================================================================
 # 4. 스크립트 실행
 # ========================================================================================
@@ -89,13 +90,13 @@ if __name__ == '__main__':
     # parser.add_argument('--load', type=str, default=None, help='불러올 모델의 경로 (예: results/exp_train/agent_1000.pth)')
     # args = parser.parse_args()
     # run_experiment(name=args.name, device=args.device, load_path=args.load)
-    run_experiment(name='baseline', device='cuda',load_path=None, config='params.json', condition='train',ff_coeff=0.0)
-    print("baseline training done")
-    run_experiment(name='adapt1', device='cuda', load_path='results/baseline/agent_30000.pth', config='params.json', condition='test',ff_coeff=8.0)
-    print("adapt1 training done")
-    run_experiment(name='washout', device='cuda', load_path='results/adapt1/agent_30000.pth', config='params.json', condition='test',ff_coeff=0.0)
+    # run_experiment(name='baseline', device='cuda',load_path=None, config='params.json', condition='train',ff_coeff=0.0)
+    # print("baseline training done")
+    # run_experiment(name='adapt1', device='cuda', load_path='results/baseline/agent_30000.pth', config='params.json', condition='test',ff_coeff=8.0)
+    # print("adapt1 training done")
+    run_experiment(name='washout', device='cuda', load_path='results/adapt1/agent_20000.pth', config='params.json', condition='test',ff_coeff=0.0)
     print("washout  done")
-    run_experiment(name='adapt2', device='cuda', load_path='results/washout/agent_30000.pth', config='params.json', condition='test',ff_coeff=8.0)
+    run_experiment(name='adapt2', device='cuda', load_path='results/washout/agent_20000.pth', config='params.json', condition='test',ff_coeff=8.0)
     print("relearning done")
 
 
