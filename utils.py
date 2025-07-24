@@ -589,7 +589,7 @@ def calc_loss_batch(data, loss_weight=None):   # ChatGPT created this function
 
 
 
-def run_rollout(env,agent,batch_size=1, catch_trial_perc=50,condition='train', # ff_coefficient = 0.
+def run_rollout(env,agent,batch_size=1, catch_trial_perc=50,condition='train', 
                 ff_coefficient=0., is_channel=False,detach=False,calc_endpoint_force=False, go_cue_random=None,
                 disturb_hidden=False, t_disturb_hidden=0.15, d_hidden=None, seed=None):
   

@@ -309,13 +309,12 @@ class CentreOutFFGym(CentreOutFF):
 
         if loss_weights is None:
             self.loss_weights = {
-                'position': 1e+3, 'jerk': 1e+4,
+                'position': 3e+3, 'jerk': 1e+5,
                 'muscle': 1e-1, 'muscle_derivative': 3e-4
             }
         else:
             self.loss_weights = loss_weights
             
-        self._reset_history()
 
     def _reset_history(self):
         """보상 계산에 필요한 history 변수들을 초기화하는 헬퍼 함수입니다."""
@@ -376,7 +375,7 @@ class CentreOutFFGym(CentreOutFF):
                       self.loss_weights['jerk'] * cost_jerk +
                       self.loss_weights['muscle'] * cost_muscle +
                       self.loss_weights['muscle_derivative'] * cost_muscle_derivative)
-        reward = -total_cost.item()
+        reward = -(total_cost.item() / 10000)
 
         # 다음 스텝을 위해 History 변수 업데이트
         self.prev_last_vel = self.last_vel.clone()

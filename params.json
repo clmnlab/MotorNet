@@ -9,7 +9,7 @@
   },
   "training_params": {
     "batch_size": 64,
-    "n_batch": 20000,
-    "log_interval": 100
+    "n_batch": 10000,
+    "log_interval": 10
   }
 }

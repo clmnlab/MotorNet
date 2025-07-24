@@ -86,6 +86,72 @@ class GRUPolicy(th.nn.Module):
             weight = next(self.parameters()).data
             hidden = weight.new(self.n_layers, batch_size, self.hidden_dim).zero_().to(self.device)
         return hidden
+# ========================================================================================
+class ActorCriticGRU(nn.Module):
+    """
+    사용자의 GRUPolicy 구조와 초기화 방식을 PPO에 맞게 수정한 액터-크리틱 네트워크.
+    """
+    def __init__(self, obs_dim, action_dim, hidden_dim=128, learn_h0=True):
+        super().__init__()
+        self.hidden_dim = hidden_dim
+        self.n_layers = 1
+
+        # GRU 레이어 (사용자의 GRUPolicy와 동일한 구조)
+        self.gru = nn.GRU(obs_dim, hidden_dim, 1, batch_first=True)
+        
+        # 정책(Actor)을 위한 출력 레이어
+        self.actor_head = nn.Linear(hidden_dim, action_dim)
+        
+        # 가치(Critic)를 위한 출력 레이어
+        self.critic_head = nn.Linear(hidden_dim, 1)
+        
+        # 행동의 표준편차 (학습 가능한 파라미터)
+        self.action_log_std = nn.Parameter(th.zeros(1, action_dim))
+
+        # --- 사용자의 정교한 가중치 초기화 로직 적용 ---
+        for name, param in self.named_parameters():
+            if "gru.weight_ih" in name:
+                nn.init.xavier_uniform_(param)
+            elif "gru.weight_hh" in name:
+                nn.init.orthogonal_(param)
+            elif "gru.bias" in name:
+                nn.init.zeros_(param)
+            elif "actor_head.weight" in name:
+                nn.init.xavier_uniform_(param)
+            elif "actor_head.bias" in name:
+                # Sigmoid가 아닌 Tanh를 사용하므로 bias를 0으로 초기화
+                nn.init.zeros_(param)
+            elif "critic_head.weight" in name:
+                nn.init.xavier_uniform_(param)
+            elif "critic_head.bias" in name:
+                nn.init.zeros_(param)
+        
+        if learn_h0:
+            self.h0 = nn.Parameter(th.zeros(self.n_layers, 1, hidden_dim), requires_grad=True)
+
+    def forward(self, obs, h_prev):
+        # GRU 레이어 통과
+        gru_out, h_next = self.gru(obs.unsqueeze(1), h_prev)
+        
+        # 은닉 상태로부터 가치와 행동의 평균 계산
+        value = self.critic_head(gru_out.squeeze(1))
+        action_mean_raw = self.actor_head(gru_out.squeeze(1))
+        # PPO는 보통 tanh를 사용해 행동 범위를 [-1, 1]로 제한
+        action_mean = th.tanh(action_mean_raw)
+        
+        # 행동 분포 생성
+        action_std = th.exp(self.action_log_std)
+        # normal 분포 생성
+        dist = th.distributions.Normal(action_mean, action_std)
+     
+        return dist, value, h_next
+
+    def init_hidden(self, batch_size, device):
+        if hasattr(self, 'h0'):
+            return self.h0.repeat(1, batch_size, 1).to(device)
+        else:
+            return th.zeros(self.n_layers, batch_size, self.hidden_dim, device=device)
+        
     
 # class GRUPolicyNet(nn.Module):
 #     def __init__(self, obs_dim, hidden_dim, action_dim):

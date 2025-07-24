@@ -52,19 +52,22 @@ def run_experiment(name='exp_train', device='cpu', load_path=None, config = 'par
     env = CentreOutFF(effector=effector, **env_params)
     n_input = env.observation_space.shape[0]
     n_output = env.n_muscles
-
-
-    agent = SLAgent(obs_dim=n_input, action_dim=n_output, batch_size = train_params['batch_size'], device=device)
-
+    loss_weight = np.array([3e+3,1e+5,1e-1,3e-4,0,0,0]) 
+    agent = SLAgent(obs_dim=n_input, action_dim=n_output, 
+                    batch_size = train_params['batch_size'], 
+                    loss_weight=loss_weight,
+                    device=device, lr=1e-4)
     # --- 저장된 모델이 있으면 로드 ---
     if load_path is not None:
         load_path = Path(load_path)
         if load_path.exists():
+            
             print(f"loading a saved model: {load_path}")
             agent.load(load_path)
         else:
             print(f"Model does not exist: {load_path}")
-    
+    agent.save(save_dir / f'agent_0.pth')
+
     losses = []
     for batch in tqdm(range(train_params['n_batch']), desc="progress of training"):
         data = run_rollout(env, agent, batch_size=train_params['batch_size'], ff_coefficient=ff_coeff, condition=condition)
@@ -90,13 +93,13 @@ if __name__ == '__main__':
     # parser.add_argument('--load', type=str, default=None, help='불러올 모델의 경로 (예: results/exp_train/agent_1000.pth)')
     # args = parser.parse_args()
     # run_experiment(name=args.name, device=args.device, load_path=args.load)
-    # run_experiment(name='baseline', device='cuda',load_path=None, config='params.json', condition='train',ff_coeff=0.0)
+    # run_experiment(name='baseline_', device='cuda',load_path=None, config='params.json', condition='train',ff_coeff=0.0)
     # print("baseline training done")
-    # run_experiment(name='adapt1', device='cuda', load_path='results/baseline/agent_30000.pth', config='params.json', condition='test',ff_coeff=8.0)
+    # run_experiment(name='adapt1_', device='cuda', load_path='results/baseline_/agent_30000.pth', config='params.json', condition='test',ff_coeff=8.0)
     # print("adapt1 training done")
-    run_experiment(name='washout', device='cuda', load_path='results/adapt1/agent_20000.pth', config='params.json', condition='test',ff_coeff=0.0)
+    run_experiment(name='washout_', device='cuda', load_path='results/adapt1_/agent_3000.pth', config='params.json', condition='test',ff_coeff=0.0)
     print("washout  done")
-    run_experiment(name='adapt2', device='cuda', load_path='results/washout/agent_20000.pth', config='params.json', condition='test',ff_coeff=8.0)
+    run_experiment(name='adapt2_', device='cuda', load_path='results/washout_/agent_10000.pth', config='params.json', condition='test',ff_coeff=8.0)
     print("relearning done")
 
 
