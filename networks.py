@@ -16,8 +16,6 @@ class MLP(nn.Module):
     def forward(self, x):
         return self.net(x)
 
-import torch as th
-
 
 class GRUPolicy(th.nn.Module):
     def __init__(self, input_dim: int, hidden_dim: int, output_dim: int, device, freeze_output_layer=False, 
@@ -92,10 +90,11 @@ class ActorCriticGRU(nn.Module):
     """
     사용자의 GRUPolicy 구조와 초기화 방식을 PPO에 맞게 수정한 액터-크리틱 네트워크.
     """
-    def __init__(self, obs_dim, action_dim, hidden_dim=128, learn_h0=True):
+    def __init__(self, obs_dim, action_dim, hidden_dim=128, device='cuda', learn_h0=True):
         super().__init__()
         self.hidden_dim = hidden_dim
         self.n_layers = 1
+        self.device = device
 
         # GRU 레이어 (사용자의 GRUPolicy와 동일한 구조)
         self.gru = nn.GRU(obs_dim, hidden_dim, 1, batch_first=True)
@@ -156,12 +155,15 @@ class ActorCriticGRU(nn.Module):
         
         return dist, value, h_next
     
-    def init_hidden(self, batch_size, device):
+    def init_hidden(self, batch_size):
         if hasattr(self, 'h0'):
-            return self.h0.repeat(1, batch_size, 1).to(device)
+            return self.h0.repeat(1, batch_size, 1).to(self.device)
         else:
-            return th.zeros(self.n_layers, batch_size, self.hidden_dim, device=device)       
+            return th.zeros(self.n_layers, batch_size, self.hidden_dim, device=self.device)       
+ 
+
     
+       
 # class GRUPolicyNet(nn.Module):
 #     def __init__(self, obs_dim, hidden_dim, action_dim):
 #         super().__init__()

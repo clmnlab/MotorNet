@@ -2,8 +2,11 @@ import torch as th
 import torch.nn as nn
 import torch.optim as optim
 from torch.distributions import Normal
+import networks
+
+
 from networks import GRUPolicy, ActorCriticGRU, QNetwork
-from buffer import ReplayBuffer 
+from buffer import ReplayBuffer, RolloutBuffer
 # from networks.py와 buffer.py에서 필요한 클래스를 가져옵니다.
 # 이 코드는 Soft Actor-Critic (SAC) 에이전트를 구현합니다.
 # SAC 에이전트는 연속적인 행동 공간을 가진 강화 학습 문제를 해결하기 위해 설계되었습니다.
@@ -33,14 +36,14 @@ class SLAgent:
         self.gamma = gamma
         self.tau = tau  # target update rate
         self.alpha = alpha  # entropy temperature
-        self.policy_net = GRUPolicy(obs_dim, hidden_dims, action_dim, device=device, 
+        self.network = GRUPolicy(obs_dim, hidden_dims, action_dim, device=device, 
                                        freeze_output_layer=freeze_output_layer, freeze_input_layer=freeze_input_layer).to(device)
-        self.policy_optimizer = optim.Adam(self.policy_net.parameters(), lr=lr)
+        self.policy_optimizer = optim.Adam(self.network.parameters(), lr=lr)
         self.replay_buffer = ReplayBuffer(obs_dim, action_dim, capacity=1000, device=device)        
         self.loss_weight = loss_weight if loss_weight is not None else np.array([1e+3,1e+5,1e-1,3e-4,1e-5,1e-3,0])
     def select_action(self, obs, h0=None): ## we can consider "deterministic" option
-        h = self.policy_net.init_hidden(batch_size=self.batch_size) if h0 is None else h0
-        action, h = self.policy_net(obs, h)
+        h = self.network.init_hidden(batch_size=self.batch_size) if h0 is None else h0
+        action, h = self.network(obs, h)
         return action, h
     
     def update(self, data):
@@ -52,11 +55,11 @@ class SLAgent:
         return loss.item()
     
     def save(self, save_dir):
-        th.save(self.policy_net.state_dict(), f"{save_dir}")
+        th.save(self.network.state_dict(), f"{save_dir}")
         print("done.")
 
     def load(self, load_dir):
-        self.policy_net.load_state_dict(th.load(f"{load_dir}"))
+        self.network.load_state_dict(th.load(f"{load_dir}"))
     
     def calc_loss(self, data, loss_weight):
         loss = {
@@ -104,7 +107,7 @@ class SLAgent:
 
 class GRUPPOAgent:
     """사용자 정의 PPO 학습 로직을 담은 에이전트 클래스."""
-    def __init__(self, env, hidden_dim=128, lr=3e-4, gamma=0.99, gae_lambda=0.95, clip_epsilon=0.2, n_epochs=10, batch_size=64, device='cpu'):
+    def __init__(self, env, hidden_dim=128, lr=1e-4, gamma=0.99, gae_lambda=0.95, clip_epsilon=0.2, n_epochs=10, batch_size=64, device='cuda'):
         self.env = env
         self.device = th.device(device)
         self.gamma = gamma
@@ -116,49 +119,50 @@ class GRUPPOAgent:
         obs_dim = env.observation_space.shape[0]
         action_dim = env.action_space.shape[0]
 
-        self.network = ActorCriticGRU(obs_dim, action_dim, hidden_dim).to(self.device)
+        self.network = ActorCriticGRU(obs_dim, action_dim, hidden_dim, device=self.device).to(self.device)
         self.optimizer = optim.Adam(self.network.parameters(), lr=lr)
     
     def select_action(self, obs, hidden_state):
         """환경과 상호작용할 때 행동을 선택합니다."""
         with th.no_grad():
             dist, value, new_hidden_state = self.network(obs, hidden_state)
-            action = dist.sample()
-            log_prob = dist.log_prob(action).sum(axis=-1)
+            action_raw = dist.sample()
+            action = th.sigmoid(action_raw)  # Sigmoid를 사용하여 행동을 [0, 1] 범위로 제한합니다.
+            log_prob = dist.log_prob(action_raw).sum(axis=-1)
         
         # 환경 및 버퍼와 상호작용하기 위해 numpy/scalar 값으로 변환
-        return (action.cpu().numpy(), 
+        return (action.cpu().numpy(),
+                action_raw.cpu().numpy(), # 원본 행동
                 value.cpu().numpy(), 
                 log_prob.cpu().numpy(), 
                 new_hidden_state.detach())
         
-    def update(self, buffer):
+    def update(self, buffer: RolloutBuffer):
         """수집된 데이터로 PPO 업데이트를 수행합니다."""
-        # 이점 정규화
-        advantages = th.tensor(buffer.advantages, dtype=th.float32).to(self.device)
-        advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
+        # 버퍼의 모든 데이터를 평탄화하여 가져옴 (이터레이터 내부 로직과 유사)
+        all_advantages = buffer.advantages.reshape(-1)
+        advantages_tensor = th.tensor(all_advantages, dtype=th.float32).to(self.device)
+        advantages_tensor = (advantages_tensor - advantages_tensor.mean()) / (advantages_tensor.std() + 1e-8)        
+        # 이터레이터에서 정규화된 advantages를 사용할 수 있도록 다시 원래 모양으로 만듦
+        buffer.advantages = advantages_tensor.cpu().numpy().reshape(buffer.n_steps, buffer.batch_size)
         
-        # 데이터를 텐서로 변환
-        states = th.tensor(buffer.states, dtype=th.float32).to(self.device)
-        actions = th.tensor(buffer.actions, dtype=th.float32).to(self.device)
-        old_log_probs = th.tensor(buffer.log_probs, dtype=th.float32).to(self.device)
-        returns = th.tensor(buffer.returns, dtype=th.float32).to(self.device)
-
         for _ in range(self.n_epochs):
-            for start in range(0, len(states), self.batch_size):
-                end = start + self.batch_size
-                # 미니배치 생성
-                mb_states, mb_actions, mb_old_log_probs, mb_advantages, mb_returns = \
-                    states[start:end], actions[start:end], old_log_probs[start:end], advantages[start:end], returns[start:end]
+            # 🔔 [변경점] 버퍼의 이터레이터를 사용하여 미니배치를 간단히 가져옴
+            for batch in buffer:
+                mb_states = batch['states']
+                mb_raw_actions = batch['raw_actions']
+                mb_old_log_probs = batch['log_probs']
+                mb_advantages = batch['advantages']
+                mb_returns = batch['returns']
 
-                h0 = self.network.init_hidden(mb_states.shape[0], self.device)
-                
-                dist, values, _ = self.network(mb_states, h0.squeeze(0))
+                # ⚠️ GRU 한계: 랜덤 샘플링으로 인해 은닉 상태는 매번 초기화
+                h0 = self.network.init_hidden(mb_states.shape[0])
+                dist, values, _ = self.network(mb_states, h0)
                 
                 # 손실 계산
                 value_loss = nn.MSELoss()(values.squeeze(), mb_returns)
                 
-                new_log_probs = dist.log_prob(mb_actions).sum(axis=-1)
+                new_log_probs = dist.log_prob(mb_raw_actions).sum(axis=-1)
                 ratio = th.exp(new_log_probs - mb_old_log_probs)
                 
                 surr1 = ratio * mb_advantages
@@ -167,13 +171,21 @@ class GRUPPOAgent:
                 
                 entropy_loss = -dist.entropy().mean()
                 
-                total_loss = policy_loss + 0.5 * value_loss + 0.01 * entropy_loss
+                total_loss = policy_loss + 0.5*value_loss + 0.01 * entropy_loss
                 
                 # 최적화
                 self.optimizer.zero_grad()
                 total_loss.backward()
+                # th.nn.utils.clip_grad_norm_(self.network.parameters(), max_norm=0.5) # 그래디언트 클리핑
                 self.optimizer.step()
+        return policy_loss.item(), value_loss.item(), entropy_loss.item()
+    
+    def save(self, save_dir):
+        th.save(self.network.state_dict(), f"{save_dir}")
+        print("done.")
 
+    def load(self, load_dir):
+        self.network.load_state_dict(th.load(f"{load_dir}"))
 
 
 

@@ -167,8 +167,9 @@ class CentreOutFF(mn.environment.Environment):
 
     
     obs = self.get_obs(action=noisy_action)
-
-    terminated = bool(self.elapsed >= self.max_ep_duration)
+    # terminated = bool(self.elapsed >= self.max_ep_duration)
+    is_done_scalar = self.elapsed >= self.max_ep_duration
+    terminated = np.full((self.batch_size,), is_done_scalar, dtype=np.float32)
     info = {
       "states": self.states,
       "endpoint_load": self.endpoint_load,
@@ -337,13 +338,21 @@ class CentreOutFFGym(CentreOutFF):
         
         # 부모의 get_obs는 torch.Tensor를 반환
         return super().get_obs(action=action, deterministic=deterministic)
-
-    def reset(self, *, seed: int | None = None, options: dict | None = None) -> tuple[np.ndarray, dict]:
+    def reset(self, *,
+              seed: int | None = None,
+              ff_coefficient: float = 0.,
+              condition: str = 'train',
+              catch_trial_perc: float = 50,
+              go_cue_random = None,
+              is_channel: bool = False,
+              calc_endpoint_force: bool = False,
+              go_cue_range: Union[list, tuple, np.ndarray] = (0.1, 0.3),
+              options: dict[str, Any] | None = None) -> tuple[Any, dict[str, Any]]:
         """ Gymnasium API 표준에 맞는 reset 메소드입니다. """
         # 부모 클래스의 reset은 obs를 torch.Tensor로 반환
-        obs, info = super().reset(seed=seed, options=options)
+    # def reset(self, *, seed: int | None = None, condition = 'train', options: dict | None = None) -> tuple[np.ndarray, dict]:
+        obs, info = super().reset(seed=seed, condition=condition, options=options)
         self._reset_history()
-        
         # [AttributeError 수정] torch.Tensor를 numpy.ndarray로 변환
         obs_np = obs.cpu().numpy()
         obs_squeezed = np.squeeze(obs_np)
