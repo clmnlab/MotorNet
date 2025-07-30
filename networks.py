@@ -1,5 +1,6 @@
 import torch as th
 import torch.nn as nn
+from torch.distributions import Normal
 
 class MLP(nn.Module):
     def __init__(self, input_dim, hidden_dims, output_dim, activation=nn.ReLU):
@@ -128,10 +129,20 @@ class ActorCriticGRU(nn.Module):
         
         if learn_h0:
             self.h0 = nn.Parameter(th.zeros(self.n_layers, 1, hidden_dim), requires_grad=True)
-
+    
     def forward(self, obs, h_prev):
-        # GRU 레이어 통과
-        gru_out, h_next = self.gru(obs.unsqueeze(1), h_prev)
+        # [오류 수정] 입력 텐서의 형태(shape)를 GRU에 맞게 보정합니다.
+        # GRU는 (batch, seq_len, features) 3D 텐서를 기대합니다.
+        
+        # 1. 단일 관측값 (select_action에서 호출): (features,) -> (1, 1, features)
+        if obs.ndim == 1:
+            obs = obs.unsqueeze(0).unsqueeze(0)
+        # 2. 배치 관측값 (train에서 호출): (batch, features) -> (batch, 1, features)
+        elif obs.ndim == 2:
+            obs = obs.unsqueeze(1)
+        
+        # 이제 obs는 항상 올바른 3D 형태를 가집니다.
+        gru_out, h_next = self.gru(obs, h_prev)
         
         # 은닉 상태로부터 가치와 행동의 평균 계산
         value = self.critic_head(gru_out.squeeze(1))
@@ -141,17 +152,15 @@ class ActorCriticGRU(nn.Module):
         
         # 행동 분포 생성
         action_std = th.exp(self.action_log_std)
-        # normal 분포 생성
-        dist = th.distributions.Normal(action_mean, action_std)
-     
+        dist = Normal(action_mean, action_std)
+        
         return dist, value, h_next
-
+    
     def init_hidden(self, batch_size, device):
         if hasattr(self, 'h0'):
             return self.h0.repeat(1, batch_size, 1).to(device)
         else:
-            return th.zeros(self.n_layers, batch_size, self.hidden_dim, device=device)
-        
+            return th.zeros(self.n_layers, batch_size, self.hidden_dim, device=device)       
     
 # class GRUPolicyNet(nn.Module):
 #     def __init__(self, obs_dim, hidden_dim, action_dim):

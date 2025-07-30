@@ -2,7 +2,7 @@ import torch as th
 import torch.nn as nn
 import torch.optim as optim
 from torch.distributions import Normal
-from networks import GRUPolicy, QNetwork
+from networks import GRUPolicy, ActorCriticGRU, QNetwork
 from buffer import ReplayBuffer 
 # from networks.py와 buffer.py에서 필요한 클래스를 가져옵니다.
 # 이 코드는 Soft Actor-Critic (SAC) 에이전트를 구현합니다.
@@ -51,8 +51,6 @@ class SLAgent:
         self.policy_optimizer.step()
         return loss.item()
     
-
-
     def save(self, save_dir):
         th.save(self.policy_net.state_dict(), f"{save_dir}")
         print("done.")
@@ -102,6 +100,79 @@ class SLAgent:
         return overall_loss, loss_weighted
 
  
+
+
+class GRUPPOAgent:
+    """사용자 정의 PPO 학습 로직을 담은 에이전트 클래스."""
+    def __init__(self, env, hidden_dim=128, lr=3e-4, gamma=0.99, gae_lambda=0.95, clip_epsilon=0.2, n_epochs=10, batch_size=64, device='cpu'):
+        self.env = env
+        self.device = th.device(device)
+        self.gamma = gamma
+        self.gae_lambda = gae_lambda
+        self.clip_epsilon = clip_epsilon
+        self.n_epochs = n_epochs
+        self.batch_size = batch_size
+        
+        obs_dim = env.observation_space.shape[0]
+        action_dim = env.action_space.shape[0]
+
+        self.network = ActorCriticGRU(obs_dim, action_dim, hidden_dim).to(self.device)
+        self.optimizer = optim.Adam(self.network.parameters(), lr=lr)
+    
+    def select_action(self, obs, hidden_state):
+        """환경과 상호작용할 때 행동을 선택합니다."""
+        with th.no_grad():
+            dist, value, new_hidden_state = self.network(obs, hidden_state)
+            action = dist.sample()
+            log_prob = dist.log_prob(action).sum(axis=-1)
+        
+        # 환경 및 버퍼와 상호작용하기 위해 numpy/scalar 값으로 변환
+        return (action.cpu().numpy(), 
+                value.cpu().numpy(), 
+                log_prob.cpu().numpy(), 
+                new_hidden_state.detach())
+        
+    def update(self, buffer):
+        """수집된 데이터로 PPO 업데이트를 수행합니다."""
+        # 이점 정규화
+        advantages = th.tensor(buffer.advantages, dtype=th.float32).to(self.device)
+        advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
+        
+        # 데이터를 텐서로 변환
+        states = th.tensor(buffer.states, dtype=th.float32).to(self.device)
+        actions = th.tensor(buffer.actions, dtype=th.float32).to(self.device)
+        old_log_probs = th.tensor(buffer.log_probs, dtype=th.float32).to(self.device)
+        returns = th.tensor(buffer.returns, dtype=th.float32).to(self.device)
+
+        for _ in range(self.n_epochs):
+            for start in range(0, len(states), self.batch_size):
+                end = start + self.batch_size
+                # 미니배치 생성
+                mb_states, mb_actions, mb_old_log_probs, mb_advantages, mb_returns = \
+                    states[start:end], actions[start:end], old_log_probs[start:end], advantages[start:end], returns[start:end]
+
+                h0 = self.network.init_hidden(mb_states.shape[0], self.device)
+                
+                dist, values, _ = self.network(mb_states, h0.squeeze(0))
+                
+                # 손실 계산
+                value_loss = nn.MSELoss()(values.squeeze(), mb_returns)
+                
+                new_log_probs = dist.log_prob(mb_actions).sum(axis=-1)
+                ratio = th.exp(new_log_probs - mb_old_log_probs)
+                
+                surr1 = ratio * mb_advantages
+                surr2 = th.clamp(ratio, 1 - self.clip_epsilon, 1 + self.clip_epsilon) * mb_advantages
+                policy_loss = -th.min(surr1, surr2).mean()
+                
+                entropy_loss = -dist.entropy().mean()
+                
+                total_loss = policy_loss + 0.5 * value_loss + 0.01 * entropy_loss
+                
+                # 최적화
+                self.optimizer.zero_grad()
+                total_loss.backward()
+                self.optimizer.step()
 
 
 

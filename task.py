@@ -354,8 +354,9 @@ class CentreOutFFGym(CentreOutFF):
         """ Gymnasium API 표준에 맞는 step 메소드입니다. """
         # 부모 클래스(CentreOutFF)는 (obs, terminated, info) 3-튜플을 반환. obs는 Tensor.
         # SB3의 1D numpy action을 부모 클래스가 기대하는 2D torch.Tensor로 변환합니다.
-        action_batch = np.expand_dims(action, axis=0)
-        action_tensor = th.from_numpy(action_batch).float().to(self.device)
+        # action_batch = np.expand_dims(action, axis=0)
+        # action_tensor = th.from_numpy(action_batch).float().to(self.device)
+        action_tensor = th.from_numpy(action).float().to(self.device)
         
         # 부모 클래스의 step은 (obs_batch, terminated, info)를 반환. obs_batch는 Tensor.
         obs_batch, terminated, info = super().step(action_tensor)
@@ -363,19 +364,33 @@ class CentreOutFFGym(CentreOutFF):
         states = self.states
         goal_th = self.goal
 
-        cost_pos = th.sum(th.square(states['fingertip'][:, :2] - goal_th))
+        cost_pos = th.sum(th.square(states['fingertip'][:, :2] - goal_th),dim=1)
         current_vel = states['cartesian'][:, 2:]
         jerk = current_vel - 2 * self.last_vel + self.prev_last_vel
-        cost_jerk = th.sum(th.square(jerk))
+        cost_jerk = th.sum(th.square(jerk),dim=1)
         muscle_force = states['muscle'][:, 4:5, :]
-        cost_muscle = th.sum(th.square(muscle_force))
+        cost_muscle = th.sum(th.square(muscle_force),dim=2).squeeze()
         muscle_force_derivative = muscle_force - self.last_force
-        cost_muscle_derivative = th.sum(th.square(muscle_force_derivative))
+        cost_muscle_derivative = th.sum(th.square(muscle_force_derivative),dim=2).squeeze()
         total_cost = (self.loss_weights['position'] * cost_pos +
-                      self.loss_weights['jerk'] * cost_jerk +
-                      self.loss_weights['muscle'] * cost_muscle +
-                      self.loss_weights['muscle_derivative'] * cost_muscle_derivative)
-        reward = -(total_cost.item() / 10000)
+                        self.loss_weights['jerk'] * cost_jerk +
+                        self.loss_weights['muscle'] * cost_muscle +
+                        self.loss_weights['muscle_derivative'] * cost_muscle_derivative)
+        reward = -(total_cost / 10000) ##
+        
+        # cost_pos = th.sum(th.square(states['fingertip'][:, :2] - goal_th))
+        # current_vel = states['cartesian'][:, 2:]
+        # jerk = current_vel - 2 * self.last_vel + self.prev_last_vel
+        # cost_jerk = th.sum(th.square(jerk))
+        # muscle_force = states['muscle'][:, 4:5, :]
+        # cost_muscle = th.sum(th.square(muscle_force))
+        # muscle_force_derivative = muscle_force - self.last_force
+        # cost_muscle_derivative = th.sum(th.square(muscle_force_derivative))
+        # total_cost = (self.loss_weights['position'] * cost_pos +
+        #               self.loss_weights['jerk'] * cost_jerk +
+        #               self.loss_weights['muscle'] * cost_muscle +
+        #               self.loss_weights['muscle_derivative'] * cost_muscle_derivative)
+        # reward = -(total_cost.item() / 10000)
 
         # 다음 스텝을 위해 History 변수 업데이트
         self.prev_last_vel = self.last_vel.clone()
@@ -387,7 +402,8 @@ class CentreOutFFGym(CentreOutFF):
         obs_np = obs_batch.cpu().numpy()
         obs_squeezed = np.squeeze(obs_np)
         
-        return obs_squeezed.astype(np.float32), float(reward), bool(terminated), False, info
+        return obs_squeezed.astype(np.float32), reward.cpu().numpy(), terminated, False, info
+        # return obs_squeezed.astype(np.float32), float(reward), bool(terminated), False, info
 
     # def render(self, mode='human'):
     #     if mode == 'human': self.plot()
