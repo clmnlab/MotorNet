@@ -45,7 +45,7 @@ def run_experiment(name='gruppo_agent', device='cuda', load_path=None, config = 
     # --- 환경 및 에이전트 생성 ---
     env = CentreOutFFGym(effector=effector, **env_params)
     device = "cuda" if th.cuda.is_available() else "cpu"
-    agent = GRUPPOAgent(env, hidden_dim=HIDDEN_DIM,  lr=5e-4, device=device)
+    agent = GRUPPOAgent(env, hidden_dim=HIDDEN_DIM,  lr=1e-4, device=device)
         # --- 저장된 모델이 있으면 로드 ---
     if load_path is not None:
         load_path = Path(load_path)
@@ -89,9 +89,9 @@ def run_experiment(name='gruppo_agent', device='cuda', load_path=None, config = 
             buffer.reset()
             episode_rewards.append(current_episode_reward)
             episode_idx += 1
-            print(f"에피소드 {episode_idx} 완료, 보상: {current_episode_reward:.2f}")
-            if len(episode_rewards) % 10 == 0:
-                print(f"스텝 {step+1}: 최근 10 에피소드 평균 보상, loss: {np.mean(episode_rewards[-10:]):.2f}, {ploss:.4f}, {vloss:.4f}, {eloss:.4f}")
+            print(f"에피소드 {episode_idx} 완료, 보상, loss: {current_episode_reward:.2f}, {ploss:.4f}, {vloss:.4f}, {eloss:.4f}")
+            # if len(episode_rewards) % 5 == 0:
+                # print(f"스텝 {step+1}: 최근 105 에피소드 평균 보상, loss: {np.mean(episode_rewards[-5:]):.2f}, {ploss:.4f}, {vloss:.4f}, {eloss:.4f}")
             current_episode_reward = 0
             obs, _ = env.reset(options={'batch_size': train_params['batch_size']})
             hidden_state = agent.network.init_hidden(train_params['batch_size'])

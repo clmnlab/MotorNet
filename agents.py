@@ -176,7 +176,7 @@ class GRUPPOAgent:
                 # 최적화
                 self.optimizer.zero_grad()
                 total_loss.backward()
-                # th.nn.utils.clip_grad_norm_(self.network.parameters(), max_norm=0.5) # 그래디언트 클리핑
+                th.nn.utils.clip_grad_norm_(self.network.parameters(), max_norm=0.5) # 그래디언트 클리핑
                 self.optimizer.step()
         return policy_loss.item(), value_loss.item(), entropy_loss.item()
     

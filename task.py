@@ -385,7 +385,7 @@ class CentreOutFFGym(CentreOutFF):
                         self.loss_weights['jerk'] * cost_jerk +
                         self.loss_weights['muscle'] * cost_muscle +
                         self.loss_weights['muscle_derivative'] * cost_muscle_derivative)
-        reward = -(total_cost / 10000) ##
+        reward = -(total_cost / 1000000) ##
         
         # cost_pos = th.sum(th.square(states['fingertip'][:, :2] - goal_th))
         # current_vel = states['cartesian'][:, 2:]
