@@ -171,7 +171,7 @@ class GRUPPOAgent:
                 
                 entropy_loss = -dist.entropy().mean()
                 
-                total_loss = policy_loss + 0.5*value_loss + 0.01 * entropy_loss
+                total_loss = policy_loss + 0.5*value_loss + 0.005 * entropy_loss
                 
                 # 최적화
                 self.optimizer.zero_grad()

@@ -92,14 +92,15 @@ def run_experiment(name='gruppo_agent', device='cuda', load_path=None, config = 
             print(f"에피소드 {episode_idx} 완료, 보상, loss: {current_episode_reward:.2f}, {ploss:.4f}, {vloss:.4f}, {eloss:.4f}")
             # if len(episode_rewards) % 5 == 0:
                 # print(f"스텝 {step+1}: 최근 105 에피소드 평균 보상, loss: {np.mean(episode_rewards[-5:]):.2f}, {ploss:.4f}, {vloss:.4f}, {eloss:.4f}")
-            current_episode_reward = 0
             obs, _ = env.reset(options={'batch_size': train_params['batch_size']})
             hidden_state = agent.network.init_hidden(train_params['batch_size'])
         # if (step+1) % 1000 == 0:
             agent.save(save_dir/f'agent_epi{episode_idx}.pth')
             with open(save_dir / 'episode_rewards.json', 'w') as f:
                 json.dump({'episode_rewards': episode_rewards}, f, indent=4)
+            current_episode_reward = 0
 
+        
     print(f"훈련 완료! (소요 시간: {time.time() - start_time:.2f}초)")
     
     # 결과 시각화
