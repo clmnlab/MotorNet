@@ -1,6 +1,8 @@
 import numpy as np
 import torch
-import torch.nn as nn
+import random
+from collections import deque
+
 
 # ======================================================================================
 # 1. 테스트 대상 버퍼 코드 (Canvas에 있는 코드를 그대로 가져옴)
@@ -116,31 +118,33 @@ class RolloutBuffer:
                 key: tensor.transpose(0, 1) if key != 'initial_hidden_states' else tensor
                 for key, tensor in batch.items()
             }
-class ReplayBuffer:
-    def __init__(self, obs_dim, action_dim, capacity, device):
-        self.capacity = capacity
-        self.device = device
-        self.obs_buf = np.zeros((capacity, obs_dim), dtype=np.float32)
-        self.next_obs_buf = np.zeros((capacity, obs_dim), dtype=np.float32)
-        self.acts_buf = np.zeros((capacity, action_dim), dtype=np.float32)
-        self.rews_buf = np.zeros((capacity, 1), dtype=np.float32)
-        self.done_buf = np.zeros((capacity, 1), dtype=np.float32)
-        self.ptr, self.size = 0, 0
-    def add(self, obs, action, reward, next_obs, done):
-        self.obs_buf[self.ptr] = obs
-        self.acts_buf[self.ptr] = action
-        self.rews_buf[self.ptr] = reward
-        self.next_obs_buf[self.ptr] = next_obs
-        self.done_buf[self.ptr] = done
-        self.ptr = (self.ptr + 1) % self.capacity
-        self.size = min(self.size + 1, self.capacity)
-    def sample_batch(self, batch_size):
-        idxs = np.random.randint(0, self.size, size=batch_size)
-        batch = dict(
-            obs=th.tensor(self.obs_buf[idxs], device=self.device),
-            action=th.tensor(self.acts_buf[idxs], device=self.device),
-            reward=th.tensor(self.rews_buf[idxs], device=self.device),
-            next_obs=th.tensor(self.next_obs_buf[idxs], device=self.device),
-            done=th.tensor(self.done_buf[idxs], device=self.device),
-        )
-        return batch
+
+
+class ReplayBufferOffPolicy:
+    """GRU 기반 Off-Policy 알고리즘을 위한 리플레이 버퍼입니다."""
+    def __init__(self, capacity: int):
+        self.buffer = deque(maxlen=capacity)
+
+    def add(self, state, action, reward, next_state, done, hidden_state):
+        """
+        버퍼에 경험(transition)을 추가합니다.
+        🔔 행동을 결정할 때 사용된 hidden_state를 함께 저장합니다.
+        """
+        # hidden_state는 GPU에 있을 수 있으므로 CPU로 옮겨서 저장
+        hidden_state_cpu = hidden_state.detach().cpu().numpy()
+        self.buffer.append((state, action, reward, next_state, done, hidden_state_cpu))
+
+    def sample(self, batch_size: int) -> tuple:
+        """버퍼에서 무작위로 미니배치를 샘플링합니다."""
+        transitions = random.sample(self.buffer, batch_size)
+        states, actions, rewards, next_states, dones, hidden_states = zip(*transitions)
+        
+        return (np.array(states, dtype=np.float32),
+                np.array(actions, dtype=np.float32),
+                np.array(rewards, dtype=np.float32).reshape(-1, 1),
+                np.array(next_states, dtype=np.float32),
+                np.array(dones, dtype=np.float32).reshape(-1, 1),
+                np.array(hidden_states, dtype=np.float32))
+
+    def __len__(self) -> int:
+        return len(self.buffer)

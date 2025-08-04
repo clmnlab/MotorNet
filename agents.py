@@ -1,28 +1,22 @@
+import os
+import sys 
 import torch as th
 import torch.nn as nn
 import torch.optim as optim
+import json
+from pathlib import Path
+from tqdm import tqdm
 from torch.distributions import Normal
-import networks
-
-
-from networks import GRUPolicy, ActorCriticGRU, QNetwork
-from buffer import ReplayBuffer, RolloutBuffer
+from utils import load_stuff
+from utils import calculate_angles_between_vectors, calculate_lateral_deviation
+from concurrent.futures import ProcessPoolExecutor, as_completed
+from networks import GRUPolicy, ActorCriticGRU, GRUActor, GRUCritic, GRUSACActor
+from buffer import RolloutBuffer, ReplayBufferOffPolicy
 # from networks.py와 buffer.py에서 필요한 클래스를 가져옵니다.
 # 이 코드는 Soft Actor-Critic (SAC) 에이전트를 구현합니다.
 # SAC 에이전트는 연속적인 행동 공간을 가진 강화 학습 문제를 해결하기 위해 설계되었습니다.
 # 이 에이전트는 정책 네트워크와 Q-네트워크를 사용하여 최적의 행동을 선택하고 학습합니다.
 # 이 코드는 PyTorch를 사용하여 구현되었으며, GRU 기반의 정책 네트워크와 MLP 기반의 Q-네트워크를 포함합니다. 
-
-import os
-import sys 
-from utils import load_stuff
-from utils import calculate_angles_between_vectors, calculate_lateral_deviation
-import torch as th
-import numpy as np
-import json
-from pathlib import Path
-from tqdm import tqdm
-from concurrent.futures import ProcessPoolExecutor, as_completed
 
 
 class SLAgent:
@@ -39,7 +33,7 @@ class SLAgent:
         self.network = GRUPolicy(obs_dim, hidden_dims, action_dim, device=device, 
                                        freeze_output_layer=freeze_output_layer, freeze_input_layer=freeze_input_layer).to(device)
         self.policy_optimizer = optim.Adam(self.network.parameters(), lr=lr)
-        self.replay_buffer = ReplayBuffer(obs_dim, action_dim, capacity=1000, device=device)        
+        # self.replay_buffer = ReplayBuffer(obs_dim, action_dim, capacity=1000, device=device)        
         self.loss_weight = loss_weight if loss_weight is not None else np.array([1e+3,1e+5,1e-1,3e-4,1e-5,1e-3,0])
     def select_action(self, obs, h0=None): ## we can consider "deterministic" option
         h = self.network.init_hidden(batch_size=self.batch_size) if h0 is None else h0
@@ -187,7 +181,7 @@ class GRUPPOAgent:
                 # --- 손실 계산 ---
                 # Value-function loss
                 value_loss = nn.MSELoss()(values, mb_returns)
-
+                
                 # Policy-gradient loss (PPO-Clip)
                 ratio = th.exp(new_log_probs - mb_old_log_probs)
                 surr1 = ratio * mb_advantages
@@ -195,7 +189,7 @@ class GRUPPOAgent:
                 policy_loss = -th.min(surr1, surr2).mean()
 
                 # 최종 손실
-                total_loss = policy_loss + 0.5 * value_loss + 0.0001 * entropy_loss
+                total_loss = policy_loss + 0.5 * value_loss + 0.01 * entropy_loss
                 
                 # 최적화
                 self.optimizer.zero_grad()
@@ -212,114 +206,89 @@ class GRUPPOAgent:
         self.network.load_state_dict(th.load(f"{load_dir}"))
 
 
-
-class SACAgent:
-    def __init__(self, obs_dim, action_dim, hidden_dims, device,
-                 lr=3e-4, gamma=0.99, tau=0.005, alpha=0.2):
+# ======================================================================================
+#  GRU를 사용하는 DDPG 에이전트
+# ======================================================================================
+class GRUDDPGAgent:
+    def __init__(self, obs_dim, action_dim, hidden_dim, device, lr=1e-3, gamma=0.99, tau=0.005):
         self.device = device
-        self.obs_dim = obs_dim
-        self.action_dim = action_dim
         self.gamma = gamma
-        self.tau = tau  # target update rate
-        self.alpha = alpha  # entropy temperature
+        self.tau = tau
 
-        # Networks
-        self.policy_net = GRUPolicy(obs_dim, hidden_dims, action_dim, device=device, 
-                                       freeze_output_layer=freeze_output_layer, freeze_input_layer=freeze_input_layer).to(device)
-        self.q1_net = QNetwork(obs_dim, action_dim, hidden_dims).to(device)
-        self.q2_net = QNetwork(obs_dim, action_dim, hidden_dims).to(device)
-        self.q1_target = QNetwork(obs_dim, action_dim, hidden_dims).to(device)
-        self.q2_target = QNetwork(obs_dim, action_dim, hidden_dims).to(device)
-        # copy weights
-        self.q1_target.load_state_dict(self.q1_net.state_dict())
-        self.q2_target.load_state_dict(self.q2_net.state_dict())
+        self.actor = GRUActor(obs_dim, action_dim, hidden_dim).to(device)
+        self.actor_target = GRUActor(obs_dim, action_dim, hidden_dim).to(device)
+        self.actor_target.load_state_dict(self.actor.state_dict())
+        self.actor_optimizer = optim.Adam(self.actor.parameters(), lr=lr)
 
-        # Optimizers
-        self.pi_optimizer = optim.Adam(self.policy_net.parameters(), lr=lr)
-        self.q1_optimizer = optim.Adam(self.q1_net.parameters(), lr=lr)
-        self.q2_optimizer = optim.Adam(self.q2_net.parameters(), lr=lr)
-        # Optional: alpha 자동 조정 기능 등 추가 가능
+        self.critic = GRUCritic(obs_dim, action_dim, hidden_dim).to(device)
+        self.critic_target = GRUCritic(obs_dim, action_dim, hidden_dim).to(device)
+        self.critic_target.load_state_dict(self.critic.state_dict())
+        self.critic_optimizer = optim.Adam(self.critic.parameters(), lr=lr)
 
-    def select_action(self, obs, h0=None, deterministic=False):
-        # obs: torch.Tensor (obs_dim,) or (batch, obs_dim)
-        obs_t = obs.unsqueeze(0) if obs.ndim == 1 else obs
-        mean, log_std, h1 = self.policy_net(obs_t, h0)
-        std = th.exp(log_std)
-        if deterministic:
-            action = mean
-            log_prob = None
-        else:
-            dist = Normal(mean, std)
-            x = dist.rsample()
-            log_prob = dist.log_prob(x).sum(dim=-1, keepdim=True)
-            action = x
-        # 필요한 범위로 clamp 혹은 tanh 후 log_prob 보정
-        return action.squeeze(0), log_prob, h1
-
-    def update(self, replay_buffer, batch_size):
-        # 샘플 배치
-        batch = replay_buffer.sample_batch(batch_size)
-        obs = batch['obs']       # (B, obs_dim)
-        action = batch['action'] # (B, action_dim)
-        reward = batch['reward'] # (B,1)
-        next_obs = batch['next_obs']
-        done = batch['done']     # (B,1)
-
-        # 1) Q-network 업데이트
+    def select_action(self, obs, hidden_state):
+        """환경과 상호작용할 때 행동과 다음 은닉 상태를 반환합니다."""
         with th.no_grad():
-            # 다음 행동 샘플링
-            next_mean, next_log_std, _ = self.policy_net(next_obs)
-            next_std = th.exp(next_log_std)
-            next_dist = Normal(next_mean, next_std)
-            next_action = next_dist.rsample()
-            next_log_prob = next_dist.log_prob(next_action).sum(dim=-1, keepdim=True)
-            # 타깃 Q 값
-            q1_targ = self.q1_target(next_obs, next_action)
-            q2_targ = self.q2_target(next_obs, next_action)
-            q_targ_min = th.min(q1_targ, q2_targ)
-            target_Q = reward + self.gamma * (1 - done) * (q_targ_min - self.alpha * next_log_prob)
-        # 현재 Q 예측
-        q1_pred = self.q1_net(obs, action)
-        q2_pred = self.q2_net(obs, action)
-        q1_loss = nn.MSELoss()(q1_pred, target_Q)
-        q2_loss = nn.MSELoss()(q2_pred, target_Q)
-        self.q1_optimizer.zero_grad(); q1_loss.backward(); self.q1_optimizer.step()
-        self.q2_optimizer.zero_grad(); q2_loss.backward(); self.q2_optimizer.step()
+            # obs의 배치 차원이 1이 아닐 수 있으므로 unsqueeze 대신 reshape 사용
+            if obs.ndim == 1:
+                obs = obs.reshape(1, -1)
+            obs_tensor = torch.tensor(obs, dtype=torch.float32).to(self.device)
+            action, next_hidden_state = self.actor(obs_tensor, hidden_state)
+        return action.cpu().numpy(), next_hidden_state
 
-        # 2) Policy 업데이트
-        mean, log_std, _ = self.policy_net(obs)
-        std = th.exp(log_std)
-        dist = Normal(mean, std)
-        new_action = dist.rsample()
-        log_prob = dist.log_prob(new_action).sum(dim=-1, keepdim=True)
-        q1_new = self.q1_net(obs, new_action)
-        q2_new = self.q2_net(obs, new_action)
-        q_new_min = th.min(q1_new, q2_new)
-        policy_loss = (self.alpha * log_prob - q_new_min).mean()
-        self.pi_optimizer.zero_grad(); policy_loss.backward(); self.pi_optimizer.step()
+    def update(self, batch):
+        states, actions, rewards, next_states, dones, hidden_states = [torch.tensor(b).to(self.device) for b in batch]
+        
+        # hidden_states의 차원을 GRU 입력에 맞게 조정 (batch, 1, hidden_dim) -> (1, batch, hidden_dim)
+        hidden_states = hidden_states.permute(1, 0, 2).contiguous()
 
-        # 3) Target network soft update
-        for param, target_param in zip(self.q1_net.parameters(), self.q1_target.parameters()):
-            target_param.data.copy_( self.tau * param.data + (1 - self.tau) * target_param.data )
-        for param, target_param in zip(self.q2_net.parameters(), self.q2_target.parameters()):
-            target_param.data.copy_( self.tau * param.data + (1 - self.tau) * target_param.data )
+        # --- 크리틱 업데이트 ---
+        with th.no_grad():
+            # 타겟 액터에 다음 상태와 '현재' 은닉 상태를 넣어 다음 행동 예측
+            next_actions, _ = self.actor_target(next_states, hidden_states)
+            target_q = self.critic_target(next_states, next_actions, hidden_states)
+            target_q = rewards + self.gamma * (1 - dones) * target_q
+        
+        current_q = self.critic(states, actions, hidden_states)
+        critic_loss = F.mse_loss(current_q, target_q)
+        self.critic_optimizer.zero_grad()
+        critic_loss.backward()
+        self.critic_optimizer.step()
 
-        return {
-            'q1_loss': q1_loss.item(),
-            'q2_loss': q2_loss.item(),
-            'policy_loss': policy_loss.item()
-        }
+        # --- 액터 업데이트 ---
+        # 액터가 생성한 행동을 크리틱이 평가
+        new_actions, _ = self.actor(states, hidden_states)
+        actor_loss = -self.critic(states, new_actions, hidden_states).mean()
+        self.actor_optimizer.zero_grad()
+        actor_loss.backward()
+        self.actor_optimizer.step()
 
-    def save(self, save_dir):
-        th.save(self.policy_net.state_dict(), f"{save_dir}/policy.pth")
-        th.save(self.q1_net.state_dict(), f"{save_dir}/q1.pth")
-        th.save(self.q2_net.state_dict(), f"{save_dir}/q2.pth")
-        # 타깃 네트워크는 학습 시 매번 덮어쓰므로 별도 저장 필요 없음
+        # --- 타겟 네트워크 소프트 업데이트 ---
+        self._soft_update(self.actor_target, self.actor)
+        self._soft_update(self.critic_target, self.critic)
 
-    def load(self, load_dir):
-        self.policy_net.load_state_dict(th.load(f"{load_dir}/policy.pth"))
-        self.q1_net.load_state_dict(th.load(f"{load_dir}/q1.pth"))
-        self.q2_net.load_state_dict(th.load(f"{load_dir}/q2.pth"))
-        # 타깃 네트워크 초기화
-        self.q1_target.load_state_dict(self.q1_net.state_dict())
-        self.q2_target.load_state_dict(self.q2_net.state_dict())
+        return critic_loss.item(), actor_loss.item()
+
+    def _soft_update(self, target, source):
+        for target_param, source_param in zip(target.parameters(), source.parameters()):
+            target_param.data.copy_(self.tau * source_param.data + (1.0 - self.tau) * target_param.data)
+
+# ======================================================================================
+# GRU를 사용하는 SAC 에이전트
+# ======================================================================================
+class GRUSACAgent:
+    def __init__(self, obs_dim, action_dim, hidden_dim, device, lr=3e-4, gamma=0.99, tau=0.005):
+        self.device = device
+        self.gamma = gamma
+        self.tau = tau
+
+        self.actor = GRUSACActor(obs_dim, action_dim, hidden_dim).to(device)
+        self.actor_optimizer = optim.Adam(self.actor.parameters(), lr=lr)
+
+        self.critic1 = GRUCritic(obs_dim, action_dim, hidden_dim).to(device)
+        self.critic1_target = GRUCritic(obs_dim, action_dim, hidden_dim).to(device)
+        self.critic1_target.load_state_dict(self.critic1.state_dict())
+        self.critic1_optimizer = optim.Adam(self.critic1.parameters(), lr=lr)
+
+        self.critic2 = GRUCritic(obs_dim, action_dim, hidden_dim).to(device)
+        self.critic2_target = GRUCritic(obs_dim, action_dim, hidden_dim).to(device)
+        self.cri

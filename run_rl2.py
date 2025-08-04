@@ -26,7 +26,7 @@ import time
 def run_experiment(name='gruppo_agent', device='cuda', load_path=None, config = 'params.json', condition = 'train', ff_coeff = 0):
     
     # --- 하이퍼파라미터 ---
-    TOTAL_TIMESTEPS = 1000000
+    TOTAL_TIMESTEPS = 2000000
     N_STEPS = 100  # 데이터 수집 스텝 수
     HIDDEN_DIM = 128
     save_dir = Path.cwd() / 'results' / name
@@ -45,7 +45,7 @@ def run_experiment(name='gruppo_agent', device='cuda', load_path=None, config = 
     # --- 환경 및 에이전트 생성 ---
     env = CentreOutFFGym(effector=effector, **env_params)
     device = "cuda" if th.cuda.is_available() else "cpu"
-    agent = GRUPPOAgent(env, hidden_dim=HIDDEN_DIM,  lr=5e-4, device=device)
+    agent = GRUPPOAgent(env, hidden_dim=HIDDEN_DIM,  lr=3e-4, device=device)
         # --- 저장된 모델이 있으면 로드 ---
     if load_path is not None:
         load_path = Path(load_path)
@@ -56,7 +56,7 @@ def run_experiment(name='gruppo_agent', device='cuda', load_path=None, config = 
         else:
             print(f"Model does not exist: {load_path}")
             
-    buffer = RolloutBuffer(env.observation_space.shape[0], env.action_space.shape[0])
+    buffer = RolloutBuffer(env.observation_space.shape[0], env.action_space.shape[0], HIDDEN_DIM, train_params['batch_size'])
 
     print(f"훈련 시작 (총 {TOTAL_TIMESTEPS} 스텝) on {device}...")
     start_time = time.time()
@@ -73,7 +73,7 @@ def run_experiment(name='gruppo_agent', device='cuda', load_path=None, config = 
         
         next_obs, reward, terminated, truncated, info = env.step(action)
         # print(terminated[0], step)
-        buffer.add(obs, action_raw, action, reward, terminated, log_prob, value)
+        buffer.add(obs, action_raw, action, reward, terminated, log_prob, value, hidden_state)
         current_episode_reward += float(np.mean(reward))
         
         obs = next_obs
@@ -92,15 +92,14 @@ def run_experiment(name='gruppo_agent', device='cuda', load_path=None, config = 
             print(f"에피소드 {episode_idx} 완료, 보상, loss: {current_episode_reward:.2f}, {ploss:.4f}, {vloss:.4f}, {eloss:.4f}")
             # if len(episode_rewards) % 5 == 0:
                 # print(f"스텝 {step+1}: 최근 105 에피소드 평균 보상, loss: {np.mean(episode_rewards[-5:]):.2f}, {ploss:.4f}, {vloss:.4f}, {eloss:.4f}")
+            current_episode_reward = 0
             obs, _ = env.reset(options={'batch_size': train_params['batch_size']})
             hidden_state = agent.network.init_hidden(train_params['batch_size'])
-        # if (step+1) % 1000 == 0:
+        if (episode_idx) % 10 == 0:
             agent.save(save_dir/f'agent_epi{episode_idx}.pth')
             with open(save_dir / 'episode_rewards.json', 'w') as f:
                 json.dump({'episode_rewards': episode_rewards}, f, indent=4)
-            current_episode_reward = 0
 
-        
     print(f"훈련 완료! (소요 시간: {time.time() - start_time:.2f}초)")
     
     # 결과 시각화
@@ -115,5 +114,6 @@ def run_experiment(name='gruppo_agent', device='cuda', load_path=None, config = 
     
 if __name__ == '__main__':
     # run_experiment(name='gruppo_agent2', device='cuda', load_path='results/gruppo_agent2/agent_500000.pth', config='params.json', condition='train',ff_coeff=0.0)
-    run_experiment(name='gruppo_agent4', device='cuda', load_path=None, config='params.json', condition='train',ff_coeff=0.0)
-        
+    # run_experiment(name='gruppo_agent6', device='cuda', load_path='results/gruppo_agent5/agent_epi13870.pth', config='params.json', condition='train',ff_coeff=0.0)
+    run_experiment(name='gruppo_agent7', device='cuda', load_path=None, config='params.json', condition='train',ff_coeff=0.0)
+    

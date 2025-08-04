@@ -8,7 +8,7 @@
     "max_ep_duration": 1.0
   },
   "training_params": {
-    "batch_size": 64,
+    "batch_size": 128,
     "n_batch": 10000,
     "log_interval": 10
   }

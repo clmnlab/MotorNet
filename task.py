@@ -298,7 +298,7 @@ class CentreOutFFGym(CentreOutFF):
     """
     def __init__(self, 
                  loss_weights: dict = None, 
-                 reward_scale: float = 0.1,
+                 reward_scale: float = 1e-1,
                  goal_bonus: float = 50.0,
                  **kwargs,
                  ):
@@ -314,10 +314,10 @@ class CentreOutFFGym(CentreOutFF):
 
         if loss_weights is None:
             self.loss_weights = {
-                # 'position': 3e+3, 'jerk': 1e+5,
+                # 'position': 3e+3, 'jerk': 1e+2,
                 # 'muscle': 1e-1, 'muscle_derivative': 3e-4
                 'position': 3e+3, 'jerk': 0,
-                'muscle': 0, 'muscle_derivative': 0
+                'muscle': 1e-1, 'muscle_derivative': 0
             }
         else:
             self.loss_weights = loss_weights
@@ -343,14 +343,14 @@ class CentreOutFFGym(CentreOutFF):
         states = self.states
         goal_th = self.goal
 
-        cost_pos = th.sum(th.square(states['fingertip'][:, :2] - goal_th), dim=1)
+        cost_pos = th.mean(th.square(states['fingertip'][:, :2] - goal_th), dim=1)
         current_vel = states['cartesian'][:, 2:]
         jerk = current_vel - 2 * self.last_vel + self.prev_last_vel
-        cost_jerk = th.sum(th.square(jerk), dim=1)
+        cost_jerk = th.mean(th.square(jerk), dim=1)
         muscle_force = states['muscle'][:, 4:5, :]
-        cost_muscle = th.sum(th.square(muscle_force), dim=2).squeeze()
+        cost_muscle = th.mean(th.square(muscle_force), dim=2).squeeze()
         muscle_force_derivative = muscle_force - self.last_force
-        cost_muscle_derivative = th.sum(th.square(muscle_force_derivative), dim=2).squeeze()
+        cost_muscle_derivative = th.mean(th.square(muscle_force_derivative), dim=2).squeeze()
 
         total_cost = (self.loss_weights['position'] * cost_pos +
                       self.loss_weights['jerk'] * cost_jerk +

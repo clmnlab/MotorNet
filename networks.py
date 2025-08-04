@@ -161,6 +161,81 @@ class ActorCriticGRU(nn.Module):
         else:
             return th.zeros(self.n_layers, batch_size, self.hidden_dim, device=self.device)       
  
+class GRUActor(nn.Module):
+    """GRU를 사용하는 결정론적(Deterministic) 액터 네트워크 (for DDPG)"""
+    def __init__(self, obs_dim, action_dim, hidden_dim=128):
+        super().__init__()
+        self.gru = nn.GRU(obs_dim, hidden_dim, batch_first=True)
+        self.net = nn.Linear(hidden_dim, action_dim)
+    
+    def forward(self, obs, hidden_state):
+        if obs.dim() == 2:
+            obs = obs.unsqueeze(1)
+        
+        gru_out, h_next = self.gru(obs, hidden_state)
+        gru_out = gru_out.squeeze(1)
+        
+        action = self.net(gru_out)
+        return action, h_next
+
+class GRUSACActor(nn.Module):
+    """GRU를 사용하는 확률적(Stochastic) 액터 네트워크 (for SAC)"""
+    def __init__(self, obs_dim, action_dim, hidden_dim=128, log_std_min=-20, log_std_max=2):
+        super().__init__()
+        self.log_std_min = log_std_min
+        self.log_std_max = log_std_max
+        self.gru = nn.GRU(obs_dim, hidden_dim, batch_first=True)
+        self.mean_layer = nn.Linear(hidden_dim, action_dim)
+        self.log_std_layer = nn.Linear(hidden_dim, action_dim)
+
+    def forward(self, obs, hidden_state):
+        if obs.dim() == 2:
+            obs = obs.unsqueeze(1)
+        
+        gru_out, h_next = self.gru(obs, hidden_state)
+        gru_out = gru_out.squeeze(1)
+        
+        mean = self.mean_layer(gru_out)
+        log_std = self.log_std_layer(gru_out)
+        log_std = th.clamp(log_std, self.log_std_min, self.log_std_max)
+        
+        return mean, log_std, h_next
+    
+    def sample(self, obs, hidden_state):
+        mean, log_std, h_next = self.forward(obs, hidden_state)
+        std = log_std.exp()
+        dist = Normal(mean, std)
+        
+        x_t = dist.rsample()  # Reparameterization Trick
+        y_t = torch.tanh(x_t)
+        action = y_t
+        
+        log_prob = dist.log_prob(x_t)
+        log_prob -= torch.log(1 - y_t.pow(2) + 1e-6)
+        log_prob = log_prob.sum(1, keepdim=True)
+        
+        return action, log_prob, h_next
+
+class GRUCritic(nn.Module):
+    """GRU를 사용하는 크리틱 네트워크입니다."""
+    def __init__(self, obs_dim, action_dim, hidden_dim=128):
+        super().__init__()
+        self.gru = nn.GRU(obs_dim, hidden_dim, batch_first=True)
+        self.net = nn.Sequential(
+            nn.Linear(hidden_dim + action_dim, hidden_dim),
+            nn.ReLU(),
+            nn.Linear(hidden_dim, 1)
+        )
+
+    def forward(self, obs, action, hidden_state):
+        if obs.dim() == 2:
+            obs = obs.unsqueeze(1)
+            
+        gru_out, _ = self.gru(obs, hidden_state)
+        gru_out = gru_out.squeeze(1)
+        
+        x = torch.cat([gru_out, action], dim=1)
+        return self.net(x)
 
     
        
