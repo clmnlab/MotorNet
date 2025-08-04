@@ -1,12 +1,11 @@
 import numpy as np
 import torch
 import torch.nn as nn
-import gymnasium as gym
 
 # ======================================================================================
 # 1. 테스트 대상 버퍼 코드 (Canvas에 있는 코드를 그대로 가져옴)
 # ======================================================================================
-class RecurrentRolloutBuffer:
+class RolloutBuffer:
     """
     순환 신경망(RNN/GRU) 학습을 위한 롤아웃 버퍼 (배치 데이터 지원).
     데이터의 시간적 순서를 유지하고, 학습 시 연속된 시퀀스 단위의 미니배치를 생성합니다.
@@ -15,12 +14,12 @@ class RecurrentRolloutBuffer:
                  obs_dim: int,
                  action_dim: int,
                  hidden_dim: int,
-                 sequence_length: int,
                  batch_size: int,              # 롤아웃 시 한 스텝에 처리하는 데이터의 배치 크기
-                 n_steps: int = 2048,
+                 sequence_length: int = 100,
+                 n_steps: int = 100,
                  gamma: float = 0.99,
                  gae_lambda: float = 0.95,
-                 mini_batch_size: int = 32,    # [의미 변경] 한 미니배치에 포함될 '시퀀스의 개수'
+                 mini_batch_size: int = 16,    # [의미 변경] 한 미니배치에 포함될 '시퀀스의 개수'
                  device: torch.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")):
 
         self.n_steps = n_steps
@@ -39,8 +38,8 @@ class RecurrentRolloutBuffer:
     def reset(self):
         self.states = np.zeros((self.n_steps, self.batch_size, self.obs_dim), dtype=np.float32)
         # CartPole은 이산 행동 공간이므로 action은 스칼라, raw_action은 로짓(2)
-        self.raw_actions = np.zeros((self.n_steps, self.batch_size, 2), dtype=np.float32)
-        self.actions = np.zeros((self.n_steps, self.batch_size), dtype=np.int64)
+        self.raw_actions = np.zeros((self.n_steps, self.batch_size, self.action_dim), dtype=np.float32)
+        self.actions = np.zeros((self.n_steps, self.batch_size, self.action_dim), dtype=np.float32)
         self.rewards = np.zeros((self.n_steps, self.batch_size), dtype=np.float32)
         self.dones = np.zeros((self.n_steps, self.batch_size), dtype=np.float32)
         self.log_probs = np.zeros((self.n_steps, self.batch_size), dtype=np.float32)
@@ -63,11 +62,14 @@ class RecurrentRolloutBuffer:
         self.dones[self.ptr] = done
         self.log_probs[self.ptr] = log_prob
         self.values[self.ptr] = value.flatten()
-        self.hidden_states[self.ptr] = hidden_state.reshape(self.batch_size, self.hidden_dim)
+        self.hidden_states[self.ptr] = hidden_state.detach().cpu().numpy().reshape(self.batch_size, self.hidden_dim)
         self.ptr = (self.ptr + 1)
 
     def compute_returns_and_advantages(self, last_values, last_dones):
-        last_values = last_values.flatten()
+        """GAE 계산. last_values/dones는 (batch_size,) 형태의 벡터입니다."""
+        # 🔔 [수정] 입력값이 스칼라일 경우를 대비하여 배열로 변환하는 로직 추가
+        last_values = np.asarray(last_values).flatten()
+        last_dones = np.asarray(last_dones).flatten()      
         last_gae_lam = 0
         for t in reversed(range(self.n_steps)):
             if t == self.n_steps - 1:
@@ -86,7 +88,7 @@ class RecurrentRolloutBuffer:
         all_data = {
             'states': torch.tensor(self.states, dtype=torch.float32).swapaxes(0, 1),
             'raw_actions': torch.tensor(self.raw_actions, dtype=torch.float32).swapaxes(0, 1),
-            'actions': torch.tensor(self.actions, dtype=torch.int64).swapaxes(0, 1),
+            'actions': torch.tensor(self.actions, dtype=torch.float32).swapaxes(0, 1),
             'log_probs': torch.tensor(self.log_probs, dtype=torch.float32).swapaxes(0, 1),
             'advantages': torch.tensor(self.advantages, dtype=torch.float32).swapaxes(0, 1),
             'returns': torch.tensor(self.returns, dtype=torch.float32).swapaxes(0, 1),

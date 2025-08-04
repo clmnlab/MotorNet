@@ -56,7 +56,7 @@ class SLAgent:
     
     def save(self, save_dir):
         th.save(self.network.state_dict(), f"{save_dir}")
-        print("done.")
+        # print("done.")
 
     def load(self, load_dir):
         self.network.load_state_dict(th.load(f"{load_dir}"))
@@ -107,15 +107,24 @@ class SLAgent:
 
 class GRUPPOAgent:
     """사용자 정의 PPO 학습 로직을 담은 에이전트 클래스."""
-    def __init__(self, env, hidden_dim=128, lr=1e-4, gamma=0.99, gae_lambda=0.95, clip_epsilon=0.2, n_epochs=10, batch_size=64, device='cuda'):
+    def __init__(self, env, 
+                 hidden_dim=128, 
+                 lr=1e-4, 
+                 gamma=0.99, 
+                 gae_lambda=0.95, 
+                 clip_epsilon=0.2, 
+                 n_epochs=10, 
+                #  batch_size=64, 
+                 sequence_length=100,
+                 device='cuda'):
         self.env = env
         self.device = th.device(device)
         self.gamma = gamma
         self.gae_lambda = gae_lambda
         self.clip_epsilon = clip_epsilon
         self.n_epochs = n_epochs
-        self.batch_size = batch_size
-        
+        # self.batch_size = batch_size
+        self.sequence_length = sequence_length
         obs_dim = env.observation_space.shape[0]
         action_dim = env.action_space.shape[0]
 
@@ -139,12 +148,11 @@ class GRUPPOAgent:
         
     def update(self, buffer: RolloutBuffer):
         """수집된 데이터로 PPO 업데이트를 수행합니다."""
-        # 버퍼의 모든 데이터를 평탄화하여 가져옴 (이터레이터 내부 로직과 유사)
-        all_advantages = buffer.advantages.reshape(-1)
-        advantages_tensor = th.tensor(all_advantages, dtype=th.float32).to(self.device)
-        advantages_tensor = (advantages_tensor - advantages_tensor.mean()) / (advantages_tensor.std() + 1e-8)        
-        # 이터레이터에서 정규화된 advantages를 사용할 수 있도록 다시 원래 모양으로 만듦
-        buffer.advantages = advantages_tensor.cpu().numpy().reshape(buffer.n_steps, buffer.batch_size)
+        # 어드밴티지 정규화 (학습 안정성에 중요)
+        advantages = th.tensor(buffer.advantages, dtype=th.float32).to(self.device)
+        advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
+        # 🔔 [수정] .detach()를 추가하여 계산 그래프에서 분리한 뒤 numpy로 변환
+        buffer.advantages = advantages.detach().cpu().numpy()
         
         for _ in range(self.n_epochs):
             # 🔔 [변경점] 버퍼의 이터레이터를 사용하여 미니배치를 간단히 가져옴
@@ -154,24 +162,40 @@ class GRUPPOAgent:
                 mb_old_log_probs = batch['log_probs']
                 mb_advantages = batch['advantages']
                 mb_returns = batch['returns']
+                mb_h0 = batch['initial_hidden_states']
 
-                # ⚠️ GRU 한계: 랜덤 샘플링으로 인해 은닉 상태는 매번 초기화
-                h0 = self.network.init_hidden(mb_states.shape[0])
-                dist, values, _ = self.network(mb_states, h0)
-                
-                # 손실 계산
-                value_loss = nn.MSELoss()(values.squeeze(), mb_returns)
-                
-                new_log_probs = dist.log_prob(mb_raw_actions).sum(axis=-1)
+                h = mb_h0.contiguous()
+                new_log_probs_list, values_list, entropy_list = [], [], []
+                for t in range(self.sequence_length):
+                    # t번째 스텝의 데이터 (mini_batch_size, feature_dim)
+                    states_t = mb_states[t]
+                    
+                    # 이전 스텝의 은닉 상태(h)를 입력으로 사용
+                    dist, values_t, h = self.network(states_t, h)
+
+                    # 계산된 결과들을 리스트에 저장
+                    new_log_probs_list.append(dist.log_prob(mb_raw_actions[t]).sum(axis=-1))
+                    values_list.append(values_t.flatten())
+                    entropy_list.append(dist.entropy().mean())
+                    
+                # 리스트들을 하나의 텐서로 결합
+                # (sequence_length, mini_batch_size)
+                new_log_probs = th.stack(new_log_probs_list)
+                values = th.stack(values_list)
+                entropy_loss = -th.stack(entropy_list).mean()
+
+                # --- 손실 계산 ---
+                # Value-function loss
+                value_loss = nn.MSELoss()(values, mb_returns)
+
+                # Policy-gradient loss (PPO-Clip)
                 ratio = th.exp(new_log_probs - mb_old_log_probs)
-                
                 surr1 = ratio * mb_advantages
                 surr2 = th.clamp(ratio, 1 - self.clip_epsilon, 1 + self.clip_epsilon) * mb_advantages
                 policy_loss = -th.min(surr1, surr2).mean()
-                
-                entropy_loss = -dist.entropy().mean()
-                
-                total_loss = policy_loss + 0.5*value_loss + 0.005 * entropy_loss
+
+                # 최종 손실
+                total_loss = policy_loss + 0.5 * value_loss + 0.0001 * entropy_loss
                 
                 # 최적화
                 self.optimizer.zero_grad()
@@ -182,7 +206,7 @@ class GRUPPOAgent:
     
     def save(self, save_dir):
         th.save(self.network.state_dict(), f"{save_dir}")
-        print("done.")
+        # print("done.")
 
     def load(self, load_dir):
         self.network.load_state_dict(th.load(f"{load_dir}"))
