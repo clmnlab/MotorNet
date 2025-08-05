@@ -7,6 +7,7 @@ import json
 from pathlib import Path
 from tqdm import tqdm
 from torch.distributions import Normal
+import torch.nn.functional as F
 from utils import load_stuff
 from utils import calculate_angles_between_vectors, calculate_lateral_deviation
 from concurrent.futures import ProcessPoolExecutor, as_completed
@@ -128,7 +129,8 @@ class GRUPPOAgent:
     def select_action(self, obs, hidden_state):
         """환경과 상호작용할 때 행동을 선택합니다."""
         with th.no_grad():
-            dist, value, new_hidden_state = self.network(obs, hidden_state)
+            obs_tensor = th.tensor(obs, dtype=th.float32).to(self.device)
+            dist, value, new_hidden_state = self.network(obs_tensor, hidden_state)
             action_raw = dist.sample()
             action = th.sigmoid(action_raw)  # Sigmoid를 사용하여 행동을 [0, 1] 범위로 제한합니다.
             log_prob = dist.log_prob(action_raw).sum(axis=-1)
@@ -210,7 +212,14 @@ class GRUPPOAgent:
 #  GRU를 사용하는 DDPG 에이전트
 # ======================================================================================
 class GRUDDPGAgent:
-    def __init__(self, obs_dim, action_dim, hidden_dim, device, lr=1e-3, gamma=0.99, tau=0.005):
+    def __init__(self, 
+                 obs_dim=17, 
+                 action_dim=6, 
+                 hidden_dim=128, 
+                 device='cuda', 
+                 lr=3e-4, 
+                 gamma=0.99, 
+                 tau=0.005):
         self.device = device
         self.gamma = gamma
         self.tau = tau
@@ -228,17 +237,15 @@ class GRUDDPGAgent:
     def select_action(self, obs, hidden_state):
         """환경과 상호작용할 때 행동과 다음 은닉 상태를 반환합니다."""
         with th.no_grad():
-            # obs의 배치 차원이 1이 아닐 수 있으므로 unsqueeze 대신 reshape 사용
-            if obs.ndim == 1:
-                obs = obs.reshape(1, -1)
-            obs_tensor = torch.tensor(obs, dtype=torch.float32).to(self.device)
+            obs_tensor = th.tensor(obs, dtype=th.float32).to(self.device)
             action, next_hidden_state = self.actor(obs_tensor, hidden_state)
-        return action.cpu().numpy(), next_hidden_state
+        return action.cpu().numpy(), next_hidden_state.detach()
 
     def update(self, batch):
-        states, actions, rewards, next_states, dones, hidden_states = [torch.tensor(b).to(self.device) for b in batch]
+        states, actions, rewards, next_states, dones, hidden_states = [th.tensor(b).to(self.device) for b in batch]
         
         # hidden_states의 차원을 GRU 입력에 맞게 조정 (batch, 1, hidden_dim) -> (1, batch, hidden_dim)
+        # what is the role of con
         hidden_states = hidden_states.permute(1, 0, 2).contiguous()
 
         # --- 크리틱 업데이트 ---

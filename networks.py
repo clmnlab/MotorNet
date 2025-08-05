@@ -163,21 +163,49 @@ class ActorCriticGRU(nn.Module):
  
 class GRUActor(nn.Module):
     """GRU를 사용하는 결정론적(Deterministic) 액터 네트워크 (for DDPG)"""
-    def __init__(self, obs_dim, action_dim, hidden_dim=128):
+    def __init__(self, obs_dim, action_dim, hidden_dim=128, device = 'cuda', learn_h0=True):
         super().__init__()
+        self.hidden_dim = hidden_dim
+        self.n_layers = 1
+        self.device = device
         self.gru = nn.GRU(obs_dim, hidden_dim, batch_first=True)
         self.net = nn.Linear(hidden_dim, action_dim)
-    
-    def forward(self, obs, hidden_state):
-        if obs.dim() == 2:
+           # --- 사용자의 정교한 가중치 초기화 로직 적용 ---
+        for name, param in self.named_parameters():
+            if "gru.weight_ih" in name:
+                nn.init.xavier_uniform_(param)
+            elif "gru.weight_hh" in name:
+                nn.init.orthogonal_(param)
+            elif "gru.bias" in name:
+                nn.init.zeros_(param)
+            elif "net.weight" in name:
+                nn.init.xavier_uniform_(param)
+            elif "net.bias" in name:
+                nn.init.zeros_(param)
+        if learn_h0:
+            self.h0 = nn.Parameter(th.zeros(self.n_layers, 1, hidden_dim), requires_grad=True)
+            
+    def forward(self, obs, h_prev):
+        # GRU는 (batch, seq_len, features) 3D 텐서를 기대합니다.
+        
+        # 1. 단일 관측값 (select_action에서 호출): (features,) -> (1, 1, features)
+        if obs.ndim == 1:
+            obs = obs.unsqueeze(0).unsqueeze(0)
+        # 2. 배치 관측값 (train에서 호출): (batch, features) -> (batch, 1, features)
+        elif obs.ndim == 2:
             obs = obs.unsqueeze(1)
         
-        gru_out, h_next = self.gru(obs, hidden_state)
-        gru_out = gru_out.squeeze(1)
-        
-        action = self.net(gru_out)
+        gru_out, h_next = self.gru(obs, h_prev)
+        action = self.net(gru_out.squeeze(1))
+        action = th.sigmoid(action)  # DDPG는 보통 sigmoid를 사용해 행동 범위를 [0, 1]로 제한
         return action, h_next
-
+    
+    def init_hidden(self, batch_size):
+        if hasattr(self, 'h0'):
+            return self.h0.repeat(1, batch_size, 1).to(self.device)
+        else:
+            return th.zeros(self.n_layers, batch_size, self.hidden_dim, device=self.device)       
+ 
 class GRUSACActor(nn.Module):
     """GRU를 사용하는 확률적(Stochastic) 액터 네트워크 (for SAC)"""
     def __init__(self, obs_dim, action_dim, hidden_dim=128, log_std_min=-20, log_std_max=2):
@@ -207,36 +235,66 @@ class GRUSACActor(nn.Module):
         dist = Normal(mean, std)
         
         x_t = dist.rsample()  # Reparameterization Trick
-        y_t = torch.tanh(x_t)
+        y_t = th.tanh(x_t)
         action = y_t
         
         log_prob = dist.log_prob(x_t)
-        log_prob -= torch.log(1 - y_t.pow(2) + 1e-6)
+        log_prob -= th.log(1 - y_t.pow(2) + 1e-6)
         log_prob = log_prob.sum(1, keepdim=True)
         
         return action, log_prob, h_next
-
+    
+    def init_hidden(self, batch_size):
+        if hasattr(self, 'h0'):
+            return self.h0.repeat(1, batch_size, 1).to(self.device)
+        else:
+            return th.zeros(self.n_layers, batch_size, self.hidden_dim, device=self.device)       
+ 
 class GRUCritic(nn.Module):
     """GRU를 사용하는 크리틱 네트워크입니다."""
-    def __init__(self, obs_dim, action_dim, hidden_dim=128):
+    def __init__(self, obs_dim, action_dim, hidden_dim=128, device='cuda', learn_h0=True):
         super().__init__()
-        self.gru = nn.GRU(obs_dim, hidden_dim, batch_first=True)
-        self.net = nn.Sequential(
-            nn.Linear(hidden_dim + action_dim, hidden_dim),
-            nn.ReLU(),
-            nn.Linear(hidden_dim, 1)
-        )
+        self.hidden_dim = hidden_dim
+        self.n_layers = 1
+        self.device = device
 
-    def forward(self, obs, action, hidden_state):
-        if obs.dim() == 2:
+        self.gru = nn.GRU(obs_dim, hidden_dim, 1, batch_first=True)
+        self.net = nn.Linear(hidden_dim + action_dim, 1)
+          # --- 사용자의 정교한 가중치 초기화 로직 적용 ---
+        for name, param in self.named_parameters():
+            if "gru.weight_ih" in name:
+                nn.init.xavier_uniform_(param)
+            elif "gru.weight_hh" in name:
+                nn.init.orthogonal_(param)
+            elif "gru.bias" in name:
+                nn.init.zeros_(param)
+            elif "net.weight" in name:
+                nn.init.xavier_uniform_(param)
+            elif "net.bias" in name:
+                nn.init.zeros_(param)
+        if learn_h0:
+            self.h0 = nn.Parameter(th.zeros(self.n_layers, 1, hidden_dim), requires_grad=True)
+       
+
+    def forward(self, obs, action, h_prev):
+        # 1. 단일 관측값 (select_action에서 호출): (features,) -> (1, 1, features)
+        if obs.ndim == 1:
+            obs = obs.unsqueeze(0).unsqueeze(0)
+        # 2. 배치 관측값 (train에서 호출): (batch, features) -> (batch, 1, features)
+        elif obs.ndim == 2:
             obs = obs.unsqueeze(1)
-            
-        gru_out, _ = self.gru(obs, hidden_state)
-        gru_out = gru_out.squeeze(1)
         
-        x = torch.cat([gru_out, action], dim=1)
+            
+        gru_out, _ = self.gru(obs, h_prev)        
+        x = th.cat([gru_out.squeeze(1), action], dim=1)
         return self.net(x)
-
+    
+    def init_hidden(self, batch_size):
+        if hasattr(self, 'h0'):
+            return self.h0.repeat(1, batch_size, 1).to(self.device)
+        else:
+            return th.zeros(self.n_layers, batch_size, self.hidden_dim, device=self.device)       
+ 
     
        
 # class GRUPolicyNet(nn.Module):

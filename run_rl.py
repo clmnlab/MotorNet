@@ -68,8 +68,8 @@ def run_experiment(name='gruppo_agent', device='cuda', load_path=None, config = 
     current_episode_reward = 0
     episode_idx = 0
     for step in range(TOTAL_TIMESTEPS):
-        obs_tensor = th.from_numpy(obs).float().to(device)
-        action, action_raw, value, log_prob, next_hidden_state = agent.select_action(obs_tensor, hidden_state)
+        # obs_tensor = th.from_numpy(obs).float().to(device)
+        action, action_raw, value, log_prob, next_hidden_state = agent.select_action(obs, hidden_state)
         
         next_obs, reward, terminated, truncated, info = env.step(action)
         # print(terminated[0], step)
