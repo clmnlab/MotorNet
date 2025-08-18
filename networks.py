@@ -90,12 +90,14 @@ class ActorCriticGRU(nn.Module):
     """
     사용자의 GRUPolicy 구조와 초기화 방식을 PPO에 맞게 수정한 액터-크리틱 네트워크.
     """
-    def __init__(self, obs_dim, action_dim, hidden_dim=128, device='cuda', learn_h0=True):
+    def __init__(self, obs_dim, action_dim, hidden_dim=128, device='cuda', learn_h0=True, log_std_min=-10, log_std_max=2):
         super().__init__()
         self.hidden_dim = hidden_dim
         self.n_layers = 1
         self.device = device
-
+        self.log_std_min = log_std_min
+        self.log_std_max = log_std_max
+        
         # GRU 레이어 (사용자의 GRUPolicy와 동일한 구조)
         self.gru = nn.GRU(obs_dim, hidden_dim, 1, batch_first=True)
         
@@ -107,6 +109,7 @@ class ActorCriticGRU(nn.Module):
         
         # 행동의 표준편차 (학습 가능한 파라미터)
         self.action_log_std = nn.Parameter(th.zeros(1, action_dim))
+        
 
         # --- 사용자의 정교한 가중치 초기화 로직 적용 ---
         for name, param in self.named_parameters():
@@ -150,7 +153,9 @@ class ActorCriticGRU(nn.Module):
         action_mean = th.tanh(action_mean_raw)
         
         # 행동 분포 생성
-        action_std = th.exp(self.action_log_std)
+        # action_std = th.exp(self.action_log_std)
+        action_std = th.exp(th.clamp(self.action_log_std, self.log_std_min, self.log_std_max))
+
         dist = Normal(action_mean, action_std)
         
         return dist, value, h_next

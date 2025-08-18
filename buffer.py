@@ -7,7 +7,7 @@ from collections import deque
 # ======================================================================================
 # 1. 테스트 대상 버퍼 코드 (Canvas에 있는 코드를 그대로 가져옴)
 # ======================================================================================
-class RolloutBuffer:
+class ReplayBufferOnPolicy:
     """
     순환 신경망(RNN/GRU) 학습을 위한 롤아웃 버퍼 (배치 데이터 지원).
     데이터의 시간적 순서를 유지하고, 학습 시 연속된 시퀀스 단위의 미니배치를 생성합니다.
@@ -21,19 +21,27 @@ class RolloutBuffer:
                  n_steps: int = 100,
                  gamma: float = 0.99,
                  gae_lambda: float = 0.95,
-                 mini_batch_size: int = 16,    # [의미 변경] 한 미니배치에 포함될 '시퀀스의 개수'
-                 device: torch.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")):
-
-        self.n_steps = n_steps
-        self.batch_size = batch_size
+                 mini_batch_size: int = 32,    # [의미 변경] 한 미니배치에 포함될 '시퀀스의 개수'
+                 device: torch.device = torch.device("cuda" if torch.cuda.is_available() else "cpu"), 
+                 **kwargs):
         self.obs_dim = obs_dim
         self.action_dim = action_dim
+        self.device = device
+        
+        # self.n_steps = kwargs.get('n_steps', 100)
+        # self.batch_size = kwargs.get('batch_size', 32)
+        # self.hidden_dim = kwargs.get('hidden_dim', 128)
+        # self.sequence_length = kwargs.get('sequence_length', 100)
+        # self.mini_batch_size = kwargs.get('mini_batch_size', 8)
+        # self.gamma = kwargs.get('gamma', 0.99)
+        # self.gae_lambda = kwargs.get('gae_lambda', 0.95)
+        self.n_steps = n_steps
+        self.batch_size = batch_size
         self.hidden_dim = hidden_dim
         self.sequence_length = sequence_length
         self.mini_batch_size = mini_batch_size
-        self.device = device
         self.gamma = gamma
-        self.gae_lambda = gae_lambda
+        self.gae_lambda = gae_lambda        
 
         self.reset()
 
@@ -122,7 +130,7 @@ class RolloutBuffer:
 
 class ReplayBufferOffPolicy:
     """GRU 기반 Off-Policy 알고리즘을 위한 리플레이 버퍼입니다."""
-    def __init__(self, capacity: int):
+    def __init__(self, capacity: int, **kwargs):
         self.buffer = deque(maxlen=capacity)
 
     def add(self, state, action, reward, next_state, done, hidden_state):

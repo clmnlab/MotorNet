@@ -298,7 +298,8 @@ class CentreOutFFGym(CentreOutFF):
     """
     def __init__(self, 
                  loss_weights: dict = None, 
-                 reward_scale: float = 1e-1,
+                #  reward_scale: float = 100.0,
+                 reward_scale: float = 1.0,
                  goal_bonus: float = 50.0,
                  **kwargs,
                  ):
@@ -316,8 +317,8 @@ class CentreOutFFGym(CentreOutFF):
             self.loss_weights = {
                 # 'position': 3e+3, 'jerk': 1e+2,
                 # 'muscle': 1e-1, 'muscle_derivative': 3e-4
-                'position': 3e+3, 'jerk': 0,
-                'muscle': 1e-1, 'muscle_derivative': 0
+                'position': 3, 'jerk': 0,
+                'muscle': 0.1, 'muscle_derivative': 0
             }
         else:
             self.loss_weights = loss_weights
@@ -343,7 +344,9 @@ class CentreOutFFGym(CentreOutFF):
         states = self.states
         goal_th = self.goal
 
-        cost_pos = th.mean(th.square(states['fingertip'][:, :2] - goal_th), dim=1)
+        cost_pos = th.linalg.norm(states['fingertip'][:, :2] - goal_th, dim=1)
+        # if cost_pos < self.target_size
+        # cost_pos = th.mean(th.square(states['fingertip'][:, :2] - goal_th), dim=1)
         current_vel = states['cartesian'][:, 2:]
         jerk = current_vel - 2 * self.last_vel + self.prev_last_vel
         cost_jerk = th.mean(th.square(jerk), dim=1)
@@ -407,9 +410,10 @@ class CentreOutFFGym(CentreOutFF):
         # --- 🔔 [핵심 수정] 보상 계산 로직 변경 ---
         current_cost = self._calculate_total_cost()
         # 1. 잠재력 기반 보상: 이전 스텝 대비 비용 감소량을 보상으로 설정
-        reward = (self.last_total_cost - current_cost) * self.reward_scale
-        
-
+        # reward = (self.last_total_cost - current_cost) * self.reward_scale
+        # 2. negative loss 보상: 현재 비용을 보상으로 설정
+        reward = -current_cost * self.reward_scale
+      
         # 다음 스텝을 위해 History 변수 업데이트
         self.last_total_cost = current_cost
         self.prev_last_vel = self.last_vel.clone()

@@ -12,14 +12,17 @@ from tqdm import tqdm
 import argparse
 import json    
 import task 
+import buffer
 from importlib import reload
 reload(agents)
 reload(utils)
 reload(task)
+reload(buffer)
 from utils import load_env, load_policy, calc_loss, run_rollout
 from task import CentreOutFFGym
-from buffer import RolloutBuffer
+from buffer import ReplayBufferOnPolicy
 from agents import SLAgent, GRUPPOAgent
+
 import time
 
 
@@ -45,7 +48,7 @@ def run_experiment(name='gruppo_agent', device='cuda', load_path=None, config = 
     # --- 환경 및 에이전트 생성 ---
     env = CentreOutFFGym(effector=effector, **env_params)
     device = "cuda" if th.cuda.is_available() else "cpu"
-    agent = GRUPPOAgent(env, hidden_dim=HIDDEN_DIM,  lr=3e-4, device=device)
+    agent = GRUPPOAgent(env, hidden_dim=HIDDEN_DIM,  lr=5e-4, device=device)
         # --- 저장된 모델이 있으면 로드 ---
     if load_path is not None:
         load_path = Path(load_path)
@@ -56,7 +59,7 @@ def run_experiment(name='gruppo_agent', device='cuda', load_path=None, config = 
         else:
             print(f"Model does not exist: {load_path}")
             
-    buffer = RolloutBuffer(env.observation_space.shape[0], env.action_space.shape[0], HIDDEN_DIM, train_params['batch_size'])
+    buffer = ReplayBufferOnPolicy(env.observation_space.shape[0], env.action_space.shape[0], HIDDEN_DIM, train_params['batch_size'])
 
     print(f"훈련 시작 (총 {TOTAL_TIMESTEPS} 스텝) on {device}...")
     start_time = time.time()
@@ -114,6 +117,6 @@ def run_experiment(name='gruppo_agent', device='cuda', load_path=None, config = 
     
 if __name__ == '__main__':
     # run_experiment(name='gruppo_agent2', device='cuda', load_path='results/gruppo_agent2/agent_500000.pth', config='params.json', condition='train',ff_coeff=0.0)
-    run_experiment(name='gruppo_agent6', device='cuda', load_path='results/gruppo_agent5/agent_epi13870.pth', config='params.json', condition='train',ff_coeff=0.0)
-    # run_experiment(name='gruppo_agent6', device='cuda', load_path=None, config='params.json', condition='train',ff_coeff=0.0)
+    # run_experiment(name='gruppo_agent6', device='cuda', load_path='results/gruppo_agent5/agent_epi13870.pth', config='params.json', condition='train',ff_coeff=0.0)
+    run_experiment(name='gruppo_agent9', device='cuda', load_path=None, config='params.json', condition='train',ff_coeff=0.0)
     

@@ -8,11 +8,15 @@ from pathlib import Path
 from tqdm import tqdm
 from torch.distributions import Normal
 import torch.nn.functional as F
+import networks, buffer, task, utils, plot
+from importlib import reload
+reload(networks)
+reload(buffer)
 from utils import load_stuff
 from utils import calculate_angles_between_vectors, calculate_lateral_deviation
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from networks import GRUPolicy, ActorCriticGRU, GRUActor, GRUCritic, GRUSACActor
-from buffer import RolloutBuffer, ReplayBufferOffPolicy
+from buffer import ReplayBufferOnPolicy
 # from networks.py와 buffer.py에서 필요한 클래스를 가져옵니다.
 # 이 코드는 Soft Actor-Critic (SAC) 에이전트를 구현합니다.
 # SAC 에이전트는 연속적인 행동 공간을 가진 강화 학습 문제를 해결하기 위해 설계되었습니다.
@@ -142,7 +146,7 @@ class GRUPPOAgent:
                 log_prob.cpu().numpy(), 
                 new_hidden_state.detach())
         
-    def update(self, buffer: RolloutBuffer):
+    def update(self, buffer: ReplayBufferOnPolicy):
         """수집된 데이터로 PPO 업데이트를 수행합니다."""
         # 어드밴티지 정규화 (학습 안정성에 중요)
         advantages = th.tensor(buffer.advantages, dtype=th.float32).to(self.device)

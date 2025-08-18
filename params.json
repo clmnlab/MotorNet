@@ -8,8 +8,28 @@
     "max_ep_duration": 1.0
   },
   "training_params": {
+    "total_timesteps": 2000000,
     "batch_size": 128,
-    "n_batch": 10000,
-    "log_interval": 10
+    "ppo": {
+      "hidden_dim": 128,
+      "lr": 0.0003,
+      "gamma": 0.99,
+      "gae_lambda": 0.95,
+      "clip_epsilon": 0.2,
+      "n_epochs": 10,
+      "n_steps": 100,
+      "sequence_length": 100,
+      "mini_batch_size": 32
+    },
+    "ddpg": {
+      "hidden_dim": 128,
+      "lr": 0.001,
+      "gamma": 0.99,
+      "tau": 0.005,
+      "buffer_capacity": 30000,
+      "learning_starts": 5000,
+      "update_batch_size": 128,
+      "exploration_noise": 0.1
+    }
   }
 }
