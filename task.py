@@ -350,7 +350,7 @@ class CentreOutFFGym(CentreOutFF):
         current_vel = states['cartesian'][:, 2:]
         jerk = current_vel - 2 * self.last_vel + self.prev_last_vel
         cost_jerk = th.mean(th.square(jerk), dim=1)
-        muscle_force = states['muscle'][:, 4:5, :]
+        muscle_force = states['muscle'][:, -1:, :]  ## last element is all_force!!
         cost_muscle = th.mean(th.square(muscle_force), dim=2).squeeze()
         muscle_force_derivative = muscle_force - self.last_force
         cost_muscle_derivative = th.mean(th.square(muscle_force_derivative), dim=2).squeeze()
