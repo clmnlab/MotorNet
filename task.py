@@ -204,10 +204,7 @@ class CentreOutFF(mn.environment.Environment):
 
     if deterministic is False:
       obs = self.apply_noise(obs, noise=self.obs_noise)
-    return obs
-  
-
-
+    return obs  
 
 def get_endpoint_force(self):
   """Internal force
@@ -285,148 +282,171 @@ def get_endpoint_load(self):
 
 
 class CentreOutFFGym(CentreOutFF):
-    """
-    사용자 정의 CentreOutFF 환경을 Stable Baselines3(SB3)와 완벽하게 호환되도록 만든
-    최종 Gymnasium 환경 클래스입니다.
+  """
+  CentreOutFFGym 환경을 초기화합니다.
 
-    - AttributeError 해결: 부모 클래스에서 반환된 torch.Tensor를 numpy.ndarray로
-      정확하게 변환하여 SB3와의 호환성을 보장합니다.
-    - TypeError 해결: `get_obs`를 오버라이드하여 `differentiable=False` 모드에서
-      `self.goal`이 Numpy 배열로 변환되어 발생하는 문제를 해결합니다.
+  Args:
+      loss_weights (dict, optional): 보상 함수 각 요소의 가중치.
+      **kwargs: 부모 클래스인 CentreOutFF의 __init__에 전달될 모든 인자들.
+  """
+  
+  def __init__(self, 
+              #  loss_weights: dict = None, 
+              # #  reward_scale: float = 100.0,
+                reward_scale: float = 1.0,
+              #  goal_bonus: float = 50.0,
+                **kwargs,
+                ):
 
-    - DRL 최적화: `differentiable=False` 모드 강제 및 상세 보상 함수를 내장합니다.
-    """
-    def __init__(self, 
-                 loss_weights: dict = None, 
-                #  reward_scale: float = 100.0,
-                 reward_scale: float = 1.0,
-                 goal_bonus: float = 50.0,
-                 **kwargs,
-                 ):
-        """
-        CentreOutFFGym 환경을 초기화합니다.
+      self.reward_scale = reward_scale
+      # self.loss_weights = loss_weights if loss_weights is not None else np.array([1e+3,1e+5,1e-1,3e-4,1e-5,1e-3,0])
+      
+      self.target_radius = 0.01 # target size: 1 cm
+      # self.gamma_pos_in =  0# 
+      self.gamma_pos_out = 1.0
+      self.gamma_ctrl_in = 1.0
+      self.gamma_ctrl_out = 0.05
 
-        Args:
-            loss_weights (dict, optional): 보상 함수 각 요소의 가중치.
-            **kwargs: 부모 클래스인 CentreOutFF의 __init__에 전달될 모든 인자들.
-        """
-        self.reward_scale = reward_scale
-        # self.loss_weights = loss_weights if loss_weights is not None else np.array([1e+3,1e+5,1e-1,3e-4,1e-5,1e-3,0])
 
-        if loss_weights is None:
-            self.loss_weights = {
-                # 'position': 3e+3, 'jerk': 1e+2,
-                # 'muscle': 1e-1, 'muscle_derivative': 3e-4
-                'position': 3, 'jerk': 0,
-                'muscle': 0.1, 'muscle_derivative': 0
-            }
-        else:
-            self.loss_weights = loss_weights
-        self.goal_bonus = goal_bonus
-        
-        kwargs['differentiable'] = False
-        super().__init__(**kwargs)
+      # if loss_weights is None:
+      #     self.loss_weights = {
+      #         # 'position': 3e+3, 'jerk': 1e+2,
+      #         # 'muscle': 1e-1, 'muscle_derivative': 3e-4
+      #         'position': 3, 'jerk': 0,
+      #         'muscle': 0.1, 'muscle_derivative': 0
+      #     }
+      # else:
+      #     self.loss_weights = loss_weights
+      
+      kwargs['differentiable'] = False
+      super().__init__(**kwargs)
+      # self.f_vec = th.ones(self.effector.muscle.n_muscles, device=self.device) * 1000.0 ## 1000 N 
+      # self.f_norm_sq = th.sum(th.square(self.f_vec))
+      
+  # def _reset_history(self):
+  #     """보상 계산에 필요한 history 변수들을 초기화하는 헬퍼 함수입니다."""
+  #     batch_size = self.batch_size if hasattr(self, 'batch_size') else 1
+  #     zeros_vel = th.zeros((batch_size, self.skeleton.space_dim), device=self.device)
+  #     self.last_vel, self.prev_last_vel = zeros_vel, zeros_vel
+  #     self.last_force = th.zeros((batch_size, 1, self.muscle.n_muscles), device=self.device)
+  #     self.last_total_cost = th.zeros(batch_size, device=self.device)
+      
+  # def _calculate_total_cost(self) -> th.Tensor:
+  #     """
+  #     🔔 [추가] 현재 상태(self.states)를 기반으로 총 비용을 계산하는 헬퍼 함수.
+  #     """
+  #     current_pos = self.states['fingertip'][:, :2]
+  #     distance = th.linalg.norm(current_pos - self.goal, ord=1, dim=1) # L1 Norm
+  #     # 목표 반경 내/외부에 따라 가중치(gamma)를 다르게 설정
+  #     is_inside = distance < self.target_radius
+  #     gamma_pos = th.where(is_inside, 0, self.gamma_pos_out) # inside the target, pos_cost = 0
+  #     gamma_ctrl = th.where(is_inside, self.gamma_ctrl_in, self.gamma_ctrl_out)
 
+  #     # 1. 위치 비용 계산
+  #     cost_pos = gamma_pos * distance        
+      
+  #     cost_c = gamma_ctrl * self.states['muscle'][:,0,:]
+  #     current_vel = self.states['cartesian'][:, 2:]
+  #     jerk = current_vel - 2 * self.last_vel + self.prev_last_vel
+  #     cost_jerk = th.mean(th.square(jerk), dim=1)
+  #     muscle_force = self.states['muscle'][:, -1:, :]  ## last element is all_force!!
+  #     cost_muscle = th.mean(th.square(muscle_force), dim=2).squeeze()
+  #     muscle_force_derivative = muscle_force - self.last_force
+  #     cost_muscle_derivative = th.mean(th.square(muscle_force_derivative), dim=2).squeeze()
+  #     # total_cost = cost_pos + cost_ctrl
+      
+  #     # total_cost = (self.loss_weights['position'] * cost_pos +
+  #     #               self.loss_weights['jerk'] * cost_jerk +
+  #     #               self.loss_weights['muscle'] * cost_muscle +
+  #     #               self.loss_weights['muscle_derivative'] * cost_muscle_derivative)
+  #     return total_cost
+    
+  def get_obs(self, action=None, deterministic: bool = False) -> th.Tensor:
+      """
+      [TypeError 해결을 위한 오버라이드]
+      부모 클래스의 get_obs를 호출하기 전, `self.goal`이 Numpy 배열이면
+      다시 PyTorch 텐서로 변환하여 `th.cat` 오류를 방지합니다.
+      
+      [AttributeError 해결을 위한 수정]
+      이 메소드는 이제 항상 torch.Tensor를 반환합니다. Numpy 변환은 reset/step에서 처리합니다.
+      """
+      if hasattr(self, 'goal') and self.goal is not None and isinstance(self.goal, np.ndarray):
+          self.goal = th.from_numpy(self.goal).to(self.device).float()
+      
+      # 부모의 get_obs는 torch.Tensor를 반환
+      return super().get_obs(action=action, deterministic=deterministic)
+    
+  def reset(self, *,
+            seed: int | None = None,
+            ff_coefficient: float = 0.,
+            condition: str = 'train',
+            catch_trial_perc: float = 50,
+            go_cue_random = None,
+            is_channel: bool = False,
+            calc_endpoint_force: bool = False,
+            go_cue_range: Union[list, tuple, np.ndarray] = (0.1, 0.3),
+            options: dict[str, Any] | None = None) -> tuple[Any, dict[str, Any]]:
+            """ Gymnasium API 표준에 맞는 reset 메소드입니다. """
             
+            obs, info = super().reset(seed=seed, condition = condition, 
+                                      ff_coefficient = ff_coefficient,
+                                      catch_trial_perc = catch_trial_perc,
+                                      go_cue_random = go_cue_random,
+                                      is_channel = is_channel,
+                                      calc_endpoint_force = calc_endpoint_force,
+                                      go_cue_range = go_cue_range,
+                                      options=options)
+            # self._reset_history()
 
-    def _reset_history(self):
-        """보상 계산에 필요한 history 변수들을 초기화하는 헬퍼 함수입니다."""
-        batch_size = self.batch_size if hasattr(self, 'batch_size') else 1
-        zeros_vel = th.zeros((batch_size, self.skeleton.space_dim), device=self.device)
-        self.last_vel, self.prev_last_vel = zeros_vel, zeros_vel
-        self.last_force = th.zeros((batch_size, 1, self.muscle.n_muscles), device=self.device)
-        self.last_total_cost = th.zeros(batch_size, device=self.device)
-        
-    def _calculate_total_cost(self) -> th.Tensor:
-        """
-        🔔 [추가] 현재 상태(self.states)를 기반으로 총 비용을 계산하는 헬퍼 함수.
-        """
-        states = self.states
-        goal_th = self.goal
+            # 🔔 [추가] 에피소드 시작 시의 초기 비용을 계산하고 저장합니다.
+            # initial_cost = self._calculate_total_cost()
+            # self.last_total_cost = initial_cost
 
-        cost_pos = th.linalg.norm(states['fingertip'][:, :2] - goal_th, dim=1)
-        # if cost_pos < self.target_size
-        # cost_pos = th.mean(th.square(states['fingertip'][:, :2] - goal_th), dim=1)
-        current_vel = states['cartesian'][:, 2:]
-        jerk = current_vel - 2 * self.last_vel + self.prev_last_vel
-        cost_jerk = th.mean(th.square(jerk), dim=1)
-        muscle_force = states['muscle'][:, -1:, :]  ## last element is all_force!!
-        cost_muscle = th.mean(th.square(muscle_force), dim=2).squeeze()
-        muscle_force_derivative = muscle_force - self.last_force
-        cost_muscle_derivative = th.mean(th.square(muscle_force_derivative), dim=2).squeeze()
+            obs_np = obs.cpu().numpy()
+            obs_squeezed = np.squeeze(obs_np)
+    
+            return obs_squeezed.astype(np.float32), info
 
-        total_cost = (self.loss_weights['position'] * cost_pos +
-                      self.loss_weights['jerk'] * cost_jerk +
-                      self.loss_weights['muscle'] * cost_muscle +
-                      self.loss_weights['muscle_derivative'] * cost_muscle_derivative)
-        return total_cost
+  def step(self, action: np.ndarray) -> tuple[np.ndarray, float, bool, bool, dict]:
+      """ Gymnasium API 표준에 맞는 step 메소드입니다. """
+      # 부모 클래스(CentreOutFF)는 (obs, terminated, info) 3-튜플을 반환. obs는 Tensor.
+      # 부모 클래스의 step은 (obs_batch, terminated, info)를 반환. obs_batch는 Tensor.
+      action_tensor = th.from_numpy(action).float().to(self.device)
+      obs_batch, terminated, info = super().step(action_tensor)
+      # --- 보상 계산 로직 변경 ---
+      current_pos = self.states['fingertip'][:, :2]
+      effective_goal = info['goal']
+      # Use info['goal'] instead of self.goal to account for go_cue
+      distance = th.linalg.norm(current_pos - effective_goal, ord=1, dim=1) 
+      is_inside = distance < self.target_radius
       
-    def get_obs(self, action=None, deterministic: bool = False) -> th.Tensor:
-        """
-        [TypeError 해결을 위한 오버라이드]
-        부모 클래스의 get_obs를 호출하기 전, `self.goal`이 Numpy 배열이면
-        다시 PyTorch 텐서로 변환하여 `th.cat` 오류를 방지합니다.
-        
-        [AttributeError 해결을 위한 수정]
-        이 메소드는 이제 항상 torch.Tensor를 반환합니다. Numpy 변환은 reset/step에서 처리합니다.
-        """
-        if hasattr(self, 'goal') and self.goal is not None and isinstance(self.goal, np.ndarray):
-            self.goal = th.from_numpy(self.goal).to(self.device).float()
-        
-        # 부모의 get_obs는 torch.Tensor를 반환
-        return super().get_obs(action=action, deterministic=deterministic)
-      
-    def reset(self, *,
-              seed: int | None = None,
-              ff_coefficient: float = 0.,
-              condition: str = 'train',
-              catch_trial_perc: float = 50,
-              go_cue_random = None,
-              is_channel: bool = False,
-              calc_endpoint_force: bool = False,
-              go_cue_range: Union[list, tuple, np.ndarray] = (0.1, 0.3),
-              options: dict[str, Any] | None = None) -> tuple[Any, dict[str, Any]]:
-              """ Gymnasium API 표준에 맞는 reset 메소드입니다. """
+      # 🔔 [수정] 타겟 안에 들어가면 위치 비용을 0으로 설정
+      gamma_pos = th.where(is_inside, 0, self.gamma_pos_out)
+      gamma_ctrl = th.where(is_inside, self.gamma_ctrl_in, self.gamma_ctrl_out)
+      cost_pos = gamma_pos * distance
+      cost_control = gamma_ctrl * th.sum(th.square(action_tensor), dim=1)
+      current_cost = cost_pos + cost_control  
+      reward = -current_cost * self.reward_scale
+      # print(cost_control)
+      # action_tensor가 근육 활성화(u_t)에 해당합니다.
+      # control_term = th.sum(action_tensor * (self.f_vec / self.f_norm_sq), dim=1)
               
-              obs, info = super().reset(seed=seed, condition = condition, options=options)
-              self._reset_history()
-
-              # 🔔 [추가] 에피소드 시작 시의 초기 비용을 계산하고 저장합니다.
-              initial_cost = self._calculate_total_cost()
-              self.last_total_cost = initial_cost
-
-              obs_np = obs.cpu().numpy()
-              obs_squeezed = np.squeeze(obs_np)
+      # 1. 잠재력 기반 보상: 이전 스텝 대비 비용 감소량을 보상으로 설정
+      # reward = (self.last_total_cost - current_cost) * self.reward_scale
+      # 2. negative loss 보상: 현재 비용을 보상으로 설정
+      # # 다음 스텝을 위해 History 변수 업데이트
+      # self.last_total_cost = current_cost
+      # self.prev_last_vel = self.last_vel.clone()
+      # self.last_vel = self.states['cartesian'][:, 2:].clone()
+      # self.last_force = self.states['muscle'][:, 4:5, :].clone()
       
-              return obs_squeezed.astype(np.float32), info
-
-    def step(self, action: np.ndarray) -> tuple[np.ndarray, float, bool, bool, dict]:
-        """ Gymnasium API 표준에 맞는 step 메소드입니다. """
-        # 부모 클래스(CentreOutFF)는 (obs, terminated, info) 3-튜플을 반환. obs는 Tensor.
-        action_tensor = th.from_numpy(action).float().to(self.device)
-        
-        # 부모 클래스의 step은 (obs_batch, terminated, info)를 반환. obs_batch는 Tensor.
-        obs_batch, terminated, info = super().step(action_tensor)
-        # --- 🔔 [핵심 수정] 보상 계산 로직 변경 ---
-        current_cost = self._calculate_total_cost()
-        # 1. 잠재력 기반 보상: 이전 스텝 대비 비용 감소량을 보상으로 설정
-        # reward = (self.last_total_cost - current_cost) * self.reward_scale
-        # 2. negative loss 보상: 현재 비용을 보상으로 설정
-        reward = -current_cost * self.reward_scale
+      obs_np = obs_batch.cpu().numpy()
+      obs_squeezed = np.squeeze(obs_np)
       
-        # 다음 스텝을 위해 History 변수 업데이트
-        self.last_total_cost = current_cost
-        self.prev_last_vel = self.last_vel.clone()
-        self.last_vel = self.states['cartesian'][:, 2:].clone()
-        self.last_force = self.states['muscle'][:, 4:5, :].clone()
-        
-        obs_np = obs_batch.cpu().numpy()
-        obs_squeezed = np.squeeze(obs_np)
-        
-        return obs_squeezed.astype(np.float32), reward.cpu().numpy(), terminated, False, info
+      return obs_squeezed.astype(np.float32), reward.cpu().numpy(), terminated, False, info
 
-    # def render(self, mode='human'):
-    #     if mode == 'human': self.plot()
+  # def render(self, mode='human'):
+  #     if mode == 'human': self.plot()
 
 
-    def close(self): pass
+  def close(self): pass

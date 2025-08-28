@@ -118,5 +118,5 @@ def run_experiment(name='gruppo_agent', device='cuda', load_path=None, config = 
 if __name__ == '__main__':
     # run_experiment(name='gruppo_agent2', device='cuda', load_path='results/gruppo_agent2/agent_500000.pth', config='params.json', condition='train',ff_coeff=0.0)
     # run_experiment(name='gruppo_agent6', device='cuda', load_path='results/gruppo_agent5/agent_epi13870.pth', config='params.json', condition='train',ff_coeff=0.0)
-    run_experiment(name='gruppo_agent9', device='cuda', load_path=None, config='params.json', condition='train',ff_coeff=0.0)
+    run_experiment(name='gruppo_agent10', device='cuda', load_path=None, config='params.json', condition='train',ff_coeff=0.0)
     

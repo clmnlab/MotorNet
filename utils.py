@@ -8,6 +8,7 @@ import matplotlib.pyplot as plt
 from copy import deepcopy
 from sklearn.utils import resample
 import torch as th
+import json
 
 
 base_dir = os.path.join(os.path.expanduser('~'),'Documents','Data','MotorNet')
@@ -668,3 +669,47 @@ def run_rollout(env,agent,batch_size=1, catch_trial_perc=50,condition='train',
             data[key] = th.detach(data[key])
 
     return data
+
+
+plotor = mn.plotor.plot_pos_over_time
+
+def plot_simulations2(data):
+    xy = data['xy'].detach().cpu().numpy()
+    tg = data['tg'].detach().cpu().numpy()
+    target_x = tg[:, -1, 0]
+    target_y = tg[:, -1, 1]
+
+    plt.figure(figsize=(10,3))
+
+    # plt.subplot(1,2,1)
+    # plt.ylim([-.4, 0.6])
+    # plt.xlim([-0.6, 0.6])
+    plotor(axis=plt.gca(), cart_results=xy)
+    plt.scatter(target_x, target_y)
+
+    # plt.subplot(1,2,2)
+    # # plt.ylim([-2, 2])
+    # # plt.xlim([-2, 2])
+    # plotor(axis=plt.gca(), cart_results=xy - target_xy)
+    # plt.axhline(0, c="grey")
+    # plt.axvline(0, c="grey")
+    # plt.xlabel("X distance to target")
+    # plt.ylabel("Y distance to target")
+    plt.show()
+
+
+# open a episode_rewards.json and plot the rewards
+def plot_rewards(filename):
+    with open(filename, 'r') as f:
+        rewards = json.load(f)
+    plt.plot(rewards['episode_rewards'])
+    # plot moving average
+    window_size = 100
+    # moving_avg = np.convolve(rewards['episode_rewards'], np.ones(window_size)/window_size, mode='valid')
+    # plt.plot(np.arange(window_size-1, len(rewards['episode_rewards'])), moving_avg, color='orange', label='Moving Average')
+    plt.legend()
+    plt.xlabel('Episode')
+    plt.ylabel('Reward')
+    plt.title('Episode Rewards')
+    plt.show()  
+
