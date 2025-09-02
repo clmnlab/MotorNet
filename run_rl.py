@@ -93,7 +93,7 @@ def run_experiment(name='gruppo_agent', device='cuda', load_path=None, config = 
             episode_rewards.append(current_episode_reward)
             episode_idx += 1
             print(f"에피소드 {episode_idx} 완료, 보상, loss: {current_episode_reward:.2f}, {ploss:.4f}, {vloss:.4f}, {eloss:.4f}")
-            # if len(episode_rewards) % 5 == 0:
+            # if len(episode_rewards) % 5 == 0:1234
                 # print(f"스텝 {step+1}: 최근 105 에피소드 평균 보상, loss: {np.mean(episode_rewards[-5:]):.2f}, {ploss:.4f}, {vloss:.4f}, {eloss:.4f}")
             current_episode_reward = 0
             obs, _ = env.reset(options={'batch_size': train_params['batch_size']})
@@ -118,5 +118,6 @@ def run_experiment(name='gruppo_agent', device='cuda', load_path=None, config = 
 if __name__ == '__main__':
     # run_experiment(name='gruppo_agent2', device='cuda', load_path='results/gruppo_agent2/agent_500000.pth', config='params.json', condition='train',ff_coeff=0.0)
     # run_experiment(name='gruppo_agent6', device='cuda', load_path='results/gruppo_agent5/agent_epi13870.pth', config='params.json', condition='train',ff_coeff=0.0)
-    run_experiment(name='gruppo_agent10', device='cuda', load_path=None, config='params.json', condition='train',ff_coeff=0.0)
+    # run_experiment(name='gruppo_agent12', device='cuda', load_path='results/gruppo_agent12/agent_epi4500.pth', config='params.json', condition='train',ff_coeff=0.0)
+    run_experiment(name='gruppo_agent13', device='cuda', load_path=None, config='params.json', condition='train',ff_coeff=0.0)
     

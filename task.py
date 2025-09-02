@@ -305,7 +305,7 @@ class CentreOutFFGym(CentreOutFF):
       # self.gamma_pos_in =  0# 
       self.gamma_pos_out = 1.0
       self.gamma_ctrl_in = 1.0
-      self.gamma_ctrl_out = 0.05
+      self.gamma_ctrl_out = 0.03
 
 
       # if loss_weights is None:
@@ -320,8 +320,8 @@ class CentreOutFFGym(CentreOutFF):
       
       kwargs['differentiable'] = False
       super().__init__(**kwargs)
-      # self.f_vec = th.ones(self.effector.muscle.n_muscles, device=self.device) * 1000.0 ## 1000 N 
-      # self.f_norm_sq = th.sum(th.square(self.f_vec))
+      self.f_vec = th.tensor(self.effector.tobuild__muscle['max_isometric_force'], device=self.device) ## 1000 N 
+      self.f_norm_sq = th.sum(th.square(self.f_vec))
       
   # def _reset_history(self):
   #     """보상 계산에 필요한 history 변수들을 초기화하는 헬퍼 함수입니다."""
@@ -417,19 +417,26 @@ class CentreOutFFGym(CentreOutFF):
       current_pos = self.states['fingertip'][:, :2]
       effective_goal = info['goal']
       # Use info['goal'] instead of self.goal to account for go_cue
-      distance = th.linalg.norm(current_pos - effective_goal, ord=1, dim=1) 
+      # L1norm_error = th.linalg.norm(current_pos - effective_goal, ord=1, dim=1) 
+      distance = th.linalg.norm(current_pos - effective_goal, ord=2, dim=1) 
       is_inside = distance < self.target_radius
+      is_early_start = (distance >= self.target_radius) & (self.elapsed < (self.go_cue_time + (self.vision_delay) * self.dt))
+      gamma_pos = th.where(
+          is_early_start.bool(),      # 첫 번째 조건
+          1.0,                # is_early_start가 참일 때의 값
+          th.where(is_inside.bool(), 0.0, self.gamma_pos_out) # is_early_start가 거짓일 때, 다시 if/else 검사
+      )
       
-      # 🔔 [수정] 타겟 안에 들어가면 위치 비용을 0으로 설정
-      gamma_pos = th.where(is_inside, 0, self.gamma_pos_out)
       gamma_ctrl = th.where(is_inside, self.gamma_ctrl_in, self.gamma_ctrl_out)
       cost_pos = gamma_pos * distance
-      cost_control = gamma_ctrl * th.sum(th.square(action_tensor), dim=1)
-      current_cost = cost_pos + cost_control  
+      cost_control = gamma_ctrl * th.sum(action_tensor * self.f_vec, dim=1)**2 / self.f_norm_sq
+      # cost_control = gamma_ctrl * th.sum(th.square(action_tensor), dim=1)
+      # current_cost = cost_pos + cost_control  
+      current_cost = cost_pos
       reward = -current_cost * self.reward_scale
-      # print(cost_control)
+      # print(cost_pos)
       # action_tensor가 근육 활성화(u_t)에 해당합니다.
-      # control_term = th.sum(action_tensor * (self.f_vec / self.f_norm_sq), dim=1)
+      # control_term = th.sum(action_tensor * self.f_vec), dim=1) / self.f_norm_sq
               
       # 1. 잠재력 기반 보상: 이전 스텝 대비 비용 감소량을 보상으로 설정
       # reward = (self.last_total_cost - current_cost) * self.reward_scale
